@@ -1,0 +1,5 @@
+numpy
+reportlab
+imageio-ffmpeg
+tzdata
+tzlocal

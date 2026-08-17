@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 260" role="img" aria-labelledby="title description">
+  <title id="title">SoulCore 入口</title>
+  <desc id="description">AstrBot → 插件管理 → SoulCore → 打开插件UI界面。兼容性提示：支持通过 AstrBot 标准注册指令调用其他插件；相关指令与插件回复不会写入 SoulCore。不支持会读写对话上下文或介入普通对话链路的插件。</desc>
+  <defs>
+    <linearGradient id="background" x1="20" y1="0" x2="1180" y2="260" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#f5eff9"/>
+      <stop offset="1" stop-color="#eee4f5"/>
+    </linearGradient>
+    <linearGradient id="action" x1="790" y1="132" x2="1125" y2="218" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#76559a"/>
+      <stop offset="1" stop-color="#51386f"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="260" rx="38" fill="url(#background)"/>
+  <rect x="1" y="1" width="1198" height="258" rx="37" fill="none" stroke="#76569a" stroke-opacity="0.18" stroke-width="2"/>
+  <circle cx="1110" cy="28" r="150" fill="#ffffff" opacity="0.26"/>
+  <text x="76" y="76" fill="#3f2d51" font-family="Inter,Segoe UI,Microsoft YaHei,PingFang SC,sans-serif" font-size="27" font-weight="700">从这里进入 SoulCore</text>
+  <text x="76" y="108" fill="#7e6d8a" font-family="Inter,Segoe UI,Microsoft YaHei,PingFang SC,sans-serif" font-size="18">在 AstrBot 控制台中依次打开</text>
+  <rect x="604" y="44" width="520" height="68" rx="20" fill="#684f87" fill-opacity="0.08" stroke="#684f87" stroke-opacity="0.15"/>
+  <circle cx="636" cy="78" r="15" fill="#684f87"/>
+  <text x="636" y="85" text-anchor="middle" fill="#ffffff" font-family="Inter,Segoe UI,sans-serif" font-size="20" font-weight="750">!</text>
+  <text x="662" y="73" fill="#59416e" font-family="Inter,Segoe UI,Microsoft YaHei,PingFang SC,sans-serif" font-size="15" font-weight="650">标准注册指令及插件回复不写入 SoulCore，可正常调用</text>
+  <text x="662" y="96" fill="#6f5b7f" font-family="Inter,Segoe UI,Microsoft YaHei,PingFang SC,sans-serif" font-size="15">不支持读写上下文或介入普通对话链路的插件</text>
+  <g font-family="Inter,Segoe UI,Microsoft YaHei,PingFang SC,sans-serif" font-size="23" font-weight="650" text-anchor="middle">
+    <rect x="76" y="142" width="178" height="72" rx="20" fill="#ffffff" stroke="#684f87" stroke-opacity="0.16"/>
+    <text x="165" y="187" fill="#49345f">AstrBot</text>
+    <path d="M271 178h34m-9-9 9 9-9 9" fill="none" stroke="#a68bb9" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="322" y="142" width="190" height="72" rx="20" fill="#ffffff" stroke="#684f87" stroke-opacity="0.16"/>
+    <text x="417" y="187" fill="#49345f">插件管理</text>
+    <path d="M529 178h34m-9-9 9 9-9 9" fill="none" stroke="#a68bb9" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="580" y="142" width="182" height="72" rx="20" fill="#ffffff" stroke="#684f87" stroke-opacity="0.16"/>
+    <text x="671" y="187" fill="#49345f">SoulCore</text>
+    <path d="M779 178h34m-9-9 9 9-9 9" fill="none" stroke="#a68bb9" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="830" y="142" width="294" height="72" rx="20" fill="url(#action)"/>
+    <text x="977" y="187" fill="#ffffff">打开插件UI界面</text>
+  </g>
+</svg>

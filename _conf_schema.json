@@ -1,0 +1,25 @@
+{
+  "command_parallel_calls": {
+    "description": "主 Core 单批指令最大并发数",
+    "hint": "默认 8。AI 同一轮返回的非终止指令会由 SoulCore 并行执行；超过该值的调用在同一批内排队。",
+    "type": "int",
+    "default": 8,
+    "slider": {
+      "min": 1,
+      "max": 32,
+      "step": 1
+    }
+  },
+  "recall_embedding_provider_id": {
+    "description": "统一回想默认 Embedding Provider ID",
+    "hint": "留空时使用仅文字召回。必须填写 AstrBot 中已配置的 Embedding Provider ID；缺失或类型错误不会静默切换。",
+    "type": "string",
+    "default": ""
+  },
+  "recall_rerank_provider_id": {
+    "description": "统一回想默认 Rerank Provider ID",
+    "hint": "留空时使用未重排的混合召回。必须填写 AstrBot 中已配置的 Rerank Provider ID；缺失或类型错误不会静默切换。",
+    "type": "string",
+    "default": ""
+  }
+}
