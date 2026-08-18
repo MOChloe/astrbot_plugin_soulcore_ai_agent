@@ -183,8 +183,6 @@ def _initializing_background_decision(
     state: InstanceInitializationState,
     now: str,
 ) -> tuple[InstanceInitializationDecision, bool]:
-    if state is InstanceInitializationState.READY:
-        return InstanceInitializationDecision(InstanceInitializationState.READY), False
     changed = state is not InstanceInitializationState.INITIALIZING
     if changed:
         conn.execute(
@@ -205,13 +203,12 @@ def _start_background_initialization(
     now: str,
     opening_anchor: str,
 ) -> tuple[InstanceInitializationDecision, bool]:
-    block_messages = state is not InstanceInitializationState.READY
-    if block_messages:
+    if state is not InstanceInitializationState.INITIALIZING:
         conn.execute(
             """UPDATE character_instances
             SET initialization_state = 'INITIALIZING', updated_at = ?
             WHERE profile_id = ? AND instance_id = ?
-              AND initialization_state IN ('UNINITIALIZED', 'INITIALIZING')""",
+              AND initialization_state IN ('UNINITIALIZED', 'INITIALIZING', 'READY')""",
             (now, profile_id, instance_id),
         )
     conn.execute(
@@ -238,12 +235,13 @@ def _start_background_initialization(
         WHERE profile_id = ? AND instance_id = ? AND author_kind = 'WORLD'""",
         (due, due, due, due, now, profile_id, instance_id),
     )
-    decision_state = (
-        InstanceInitializationState.INITIALIZING
-        if block_messages
-        else InstanceInitializationState.READY
+    return (
+        InstanceInitializationDecision(
+            InstanceInitializationState.INITIALIZING,
+            started=True,
+        ),
+        True,
     )
-    return InstanceInitializationDecision(decision_state, started=True), True
 
 
 __all__ = ["InstanceInitializationRecords"]

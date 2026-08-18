@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 
-from ..interfaces.astrbot.support import PLUGIN_NAME
+from ..interfaces.astrbot.support import PERSISTENT_DATA_NAMESPACE
 from ..storage.sqlite.schema.current import SchemaRecoveryRequired
 from ..storage.sqlite.schema_recovery import SchemaRecoveryCoordinator
 from ..version import VERSION
@@ -41,7 +41,7 @@ async def assemble_application(
     from .interfaces import assemble_interfaces
     from .workers import assemble_workers
 
-    data_dir = Path(StarTools.get_data_dir(PLUGIN_NAME))
+    data_dir = Path(StarTools.get_data_dir(PERSISTENT_DATA_NAMESPACE))
     foundation = await assemble_foundation(context, config, data_dir)
     try:
         factory = core_factory or _default_core_factory()

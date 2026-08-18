@@ -18,7 +18,9 @@ from ...contracts.runtime_limits import (
 from ...contracts.system_notice import soulcore_system_notice
 from .umo import CapturedUMO, RouteKind
 
-PLUGIN_NAME = "astrbot_plugin_soulcore_ai_agent"
+# AstrBot uses this value as the persistent-data directory key.  The public
+# plugin rename must not move existing installations onto an empty database.
+PERSISTENT_DATA_NAMESPACE = "astrbot_plugin_soulcore"
 
 
 def has_trusted_astrbot_command_marker(event: AstrMessageEvent) -> bool:
@@ -171,7 +173,7 @@ class AstrBotSyntheticEventFactory:
 __all__ = [
     "AstrBotSyntheticEventFactory",
     "OutboxStatus",
-    "PLUGIN_NAME",
+    "PERSISTENT_DATA_NAMESPACE",
     "file_artifact_operation_timeout_seconds",
     "foreground_ai_error_message",
     "has_trusted_astrbot_command_marker",
