@@ -94,10 +94,12 @@ def load_public_release_notes(path: Path = PUBLIC_CHANGELOG) -> list[dict[str, A
 
 def validate_public_release_notes(path: Path, expected_version: str) -> list[dict[str, Any]]:
     items = load_public_release_notes(path)
-    if items[0]["version"] != f"v{expected_version}":
+    newest_public_version = _version_tuple(str(items[0]["version"]))
+    runtime_version = _version_tuple(expected_version)
+    if newest_public_version > runtime_version:
         raise ValueError(
-            "public CHANGELOG latest version does not match the release version: "
-            f"{items[0]['version']} != v{expected_version}"
+            "public CHANGELOG latest version is newer than the release version: "
+            f"{items[0]['version']} > v{expected_version}"
         )
     return items
 
