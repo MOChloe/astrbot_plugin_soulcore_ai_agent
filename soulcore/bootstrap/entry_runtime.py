@@ -41,7 +41,7 @@ async def assemble_application(
     from .interfaces import assemble_interfaces
     from .workers import assemble_workers
 
-    data_dir = Path(StarTools.get_data_dir(PERSISTENT_DATA_NAMESPACE))
+    data_dir = _persistent_data_dir(StarTools)
     foundation = await assemble_foundation(context, config, data_dir)
     try:
         factory = core_factory or _default_core_factory()
@@ -94,6 +94,10 @@ def _default_core_factory() -> CoreRuntimeFactory:
 
 def _plugin_version() -> str:
     return VERSION
+
+
+def _persistent_data_dir(star_tools: Any) -> Path:
+    return Path(star_tools.get_data_dir(PERSISTENT_DATA_NAMESPACE))
 
 
 _PAGE_READY_TIMEOUT_SECONDS = 30.0

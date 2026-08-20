@@ -518,6 +518,12 @@ def _set_background_enabled_sql(
     current_version = int(instance["config_version"])
     if bool(instance["enabled"]) == bool(enabled):
         return current_version
+    _synchronize_character_initialization_gate_sql(
+        conn,
+        instance,
+        enabled=enabled,
+        now=now,
+    )
     rows = conn.execute(
         """SELECT active_task_id FROM background_author_states
         WHERE profile_id = ? AND instance_id = ? AND active_task_id IS NOT NULL""",
@@ -587,6 +593,47 @@ def _set_background_enabled_sql(
     if cursor.rowcount != 1:
         raise ValueError(conflict_message)
     return current_version + 1
+
+
+def _synchronize_character_initialization_gate_sql(
+    conn: sqlite3.Connection,
+    instance: sqlite3.Row,
+    *,
+    enabled: bool,
+    now: str,
+) -> None:
+    """Keep MainCore admission aligned with the background lifecycle."""
+
+    background_state = str(instance["initialization_state"])
+    target_state = (
+        background_state
+        if enabled and background_state in {"UNINITIALIZED", "INITIALIZING"}
+        else "READY"
+    )
+    if target_state == "READY":
+        conn.execute(
+            """UPDATE character_instances
+            SET initialization_state = 'READY',
+                initialization_completed_at = COALESCE(initialization_completed_at, ?),
+                updated_at = ?
+            WHERE profile_id = ? AND instance_id = ?
+              AND initialization_state != 'READY'""",
+            (now, now, str(instance["profile_id"]), str(instance["instance_id"])),
+        )
+        return
+    conn.execute(
+        """UPDATE character_instances
+        SET initialization_state = ?, initialization_completed_at = NULL, updated_at = ?
+        WHERE profile_id = ? AND instance_id = ?
+          AND initialization_state != ?""",
+        (
+            target_state,
+            now,
+            str(instance["profile_id"]),
+            str(instance["instance_id"]),
+            target_state,
+        ),
+    )
 
 
 def _clear_background_generated_state_sql(

@@ -231,7 +231,8 @@ class AIWorkRecordsController:
     def _filter_options(self, filters: Mapping[str, Any]) -> dict[str, Any]:
         issue_types = [
             {"value": "fallback", "label": "发生降级"},
-            {"value": "retried", "label": "发生 Provider 重试"},
+            {"value": "retried", "label": "发生同模型重试"},
+            {"value": "switched", "label": "发生模型切换"},
         ]
         for raw_code in _list_value(filters, "issue_codes"):
             code = str(raw_code)
@@ -361,6 +362,7 @@ class AIWorkRecordsController:
             "internal_action_count": _int_value(row, "internal_action_count"),
             "provider_send_count": _int_value(row, "provider_send_count"),
             "retry_count": _int_value(row, "retry_count"),
+            "model_switch_count": _int_value(row, "model_switch_count"),
             "tokens": self._token_summary(row),
             "models": list(filter(None, _text_value(row, "models_csv").split(","))),
             "composition": self._composition_view(row),
@@ -443,13 +445,14 @@ class AIWorkRecordsController:
 
     @staticmethod
     def _attempt_aggregates(attempts: list[Mapping[str, Any]]) -> dict[str, Any]:
-        send_count = retry_count = input_tokens = output_tokens = 0
+        send_count = retry_count = model_switch_count = input_tokens = output_tokens = 0
         cache_read_tokens = cache_write_tokens = 0
         models: dict[str, None] = {}
-        for attempt in attempts:
+        for attempt, attempt_kind in AIWorkRecordsController._attempts_with_kind(attempts):
             sent = attempt.get("sent_at") is not None
             send_count += int(sent)
-            retry_count += int(sent and _int_value(attempt, "attempt_no", 1) > 1)
+            retry_count += int(sent and attempt_kind == "same_backend_retry")
+            model_switch_count += int(sent and attempt_kind == "backend_switch")
             input_tokens += _int_value(attempt, "input_tokens")
             output_tokens += _int_value(attempt, "output_tokens")
             cache_read_tokens += _int_value(attempt, "cache_read_tokens")
@@ -460,6 +463,7 @@ class AIWorkRecordsController:
         return {
             "provider_send_count": send_count,
             "retry_count": retry_count,
+            "model_switch_count": model_switch_count,
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "cache_read_tokens": cache_read_tokens,
@@ -503,16 +507,13 @@ class AIWorkRecordsController:
     ) -> list[dict[str, Any]]:
         node_purposes = {int(node["node_id"]): _text_value(node, "purpose") for node in nodes}
         attempts_by_node: dict[int, list[dict[str, Any]]] = {}
-        first_backend_by_node: dict[int, str] = {}
-        for attempt in attempts:
+        for attempt, attempt_kind in self._attempts_with_kind(attempts):
             node_id = int(attempt["node_id"])
-            backend_id = _text_value(attempt, "backend_id")
-            first_backend = first_backend_by_node.setdefault(node_id, backend_id)
             attempts_by_node.setdefault(node_id, []).append(
                 self._attempt_view(
                     attempt,
                     purpose=node_purposes.get(node_id, ""),
-                    fallback=bool(first_backend and backend_id and backend_id != first_backend),
+                    attempt_kind=attempt_kind,
                 )
             )
         events_by_node: dict[int, list[dict[str, Any]]] = {}
@@ -536,6 +537,30 @@ class AIWorkRecordsController:
             else:
                 roots.append(views[node_id])
         return roots
+
+    @staticmethod
+    def _attempts_with_kind(
+        attempts: list[Mapping[str, Any]],
+    ) -> list[tuple[Mapping[str, Any], str]]:
+        previous_sent_backend: dict[tuple[int, int], str] = {}
+        result: list[tuple[Mapping[str, Any], str]] = []
+        for attempt in attempts:
+            scope = (
+                _int_value(attempt, "node_id"),
+                _int_value(attempt, "round_no", 1),
+            )
+            backend_id = _text_value(attempt, "backend_id") or _text_value(attempt, "model_id")
+            previous = previous_sent_backend.get(scope, "")
+            if not previous or not backend_id:
+                attempt_kind = "initial"
+            elif backend_id == previous:
+                attempt_kind = "same_backend_retry"
+            else:
+                attempt_kind = "backend_switch"
+            result.append((attempt, attempt_kind))
+            if attempt.get("sent_at") is not None and backend_id:
+                previous_sent_backend[scope] = backend_id
+        return result
 
     def _node_view(
         self,
@@ -594,11 +619,15 @@ class AIWorkRecordsController:
         attempt: Mapping[str, Any],
         *,
         purpose: str = "",
-        fallback: bool = False,
+        attempt_kind: str = "initial",
     ) -> dict[str, Any]:
         request = _dict_value(attempt, "request")
         response = _dict_value(attempt, "response")
-        audio = audio_attempt_summary(attempt, purpose=purpose, fallback=fallback)
+        audio = audio_attempt_summary(
+            attempt,
+            purpose=purpose,
+            fallback=attempt_kind == "backend_switch",
+        )
         return {
             "attempt_ref": _text_value(attempt, "public_ref"),
             "round": _int_value(attempt, "round_no", 1),
@@ -615,7 +644,7 @@ class AIWorkRecordsController:
             "tokens": attempt_token_view(attempt),
             "cache": None if audio is not None else attempt_cache_view(attempt),
             "cache_applicable": audio is None,
-            "fallback": bool(fallback),
+            "attempt_kind": attempt_kind,
             "audio": audio,
             "error": self._error_view(
                 _text_value(attempt, "error_code"),

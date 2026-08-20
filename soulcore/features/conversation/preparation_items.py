@@ -46,7 +46,7 @@ _BACKGROUND_SOURCE_BY_KIND = {
 
 
 def background_material_context_items(value: Any | None) -> tuple[ContextItem, ...]:
-    if not isinstance(value, MainCoreBackgroundViewProjection):
+    if not isinstance(value, MainCoreBackgroundViewProjection) or not value.enabled:
         return ()
     background_as_of = _background_as_of(value)
     return tuple(

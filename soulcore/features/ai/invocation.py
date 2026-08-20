@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from ...contracts.ai_models import (
@@ -56,6 +57,12 @@ T = TypeVar("T")
 class PromptCacheAttemptOutcome:
     completion: AICompletion | None = None
     error: AIErrorInfo | None = None
+
+
+class _FailureAction(StrEnum):
+    STOP = "stop"
+    RETRY_SAME_BACKEND = "retry_same_backend"
+    NEXT_BACKEND = "next_backend"
 
 
 class PromptCacheInvocationMixin:
@@ -440,7 +447,13 @@ class AIInvocationMixin(PromptCacheInvocationMixin):
                         circuit_scope,
                         package_scope,
                     )
-                state.last_error = self._prepare_failure(state, registration, outcome.error)
+                state.last_error, action = self._prepare_failure(
+                    state,
+                    registration,
+                    outcome.error,
+                    backend_attempt=backend_attempt,
+                    max_attempts=policy.max_attempts,
+                )
                 await self._finish_failure(
                     state,
                     registration,
@@ -448,14 +461,9 @@ class AIInvocationMixin(PromptCacheInvocationMixin):
                     circuit_scope,
                     package_scope,
                 )
-                if self._must_leave_backend(state.last_error):
-                    state.stop_all = not state.last_error.switch_backend
-                    break
-                if self._may_retry_same_backend(
-                    state.last_error, backend_attempt, policy.max_attempts
-                ):
+                if action is _FailureAction.RETRY_SAME_BACKEND:
                     continue
-                state.stop_all = not state.last_error.switch_backend
+                state.stop_all = action is _FailureAction.STOP
                 break
             return None
         finally:
@@ -750,32 +758,46 @@ class AIInvocationMixin(PromptCacheInvocationMixin):
         state: _InvocationState,
         registration: BackendRegistration,
         error: AIErrorInfo | None,
-    ) -> AIErrorInfo:
+        *,
+        backend_attempt: int,
+        max_attempts: int,
+    ) -> tuple[AIErrorInfo, _FailureAction]:
         if error is None:
             error = AIErrorInfo(AIErrorCode.INTERNAL, "Unknown invocation failure")
         current = replace(error, backend_id=registration.descriptor.backend_id)
         current = self._apply_replay_policy(state.request, current)
-        diagnostic = self._attempt_diagnostic(state, registration, current)
-        state.failure_attempts.append(diagnostic)
-        return replace(
+        action = self._failure_action(
             current,
-            details={
-                **dict(current.details),
-                "model_id": diagnostic["model_id"],
-                "attempt_no": state.attempts,
-                "attempts": tuple(state.failure_attempts[-10:]),
-            },
+            backend_attempt=backend_attempt,
+            max_attempts=max_attempts,
+        )
+        diagnostic = self._attempt_diagnostic(state, registration, current, action)
+        state.failure_attempts.append(diagnostic)
+        return (
+            replace(
+                current,
+                details={
+                    **dict(current.details),
+                    "model_id": diagnostic["model_id"],
+                    "attempt_no": state.attempts,
+                    "attempts": tuple(state.failure_attempts[-10:]),
+                },
+            ),
+            action,
         )
 
     @staticmethod
     def _apply_replay_policy(request: AIModelRequest, error: AIErrorInfo) -> AIErrorInfo:
-        accepted_non_idempotent_image_response = (
-            str(request.metadata.get("capability") or "") == "image.generate"
-            and bool(request.metadata.get("non_replayable_on_unknown_failure"))
-            and bool(error.details.get("provider_response_accepted"))
-            and error.phase == "response"
+        protects_non_idempotent_effect = bool(
+            request.metadata.get("non_replayable_on_unknown_failure")
         )
-        if accepted_non_idempotent_image_response:
+        explicit_http_rejection = (
+            error.status_code is not None and 400 <= int(error.status_code) < 500
+        )
+        accepted_non_idempotent_response = (
+            protects_non_idempotent_effect and error.phase == "response"
+        )
+        if accepted_non_idempotent_response:
             error = replace(
                 error,
                 retryable=False,
@@ -791,8 +813,10 @@ class AIInvocationMixin(PromptCacheInvocationMixin):
             AIErrorCode.NETWORK,
             AIErrorCode.REMOTE_5XX,
         }
-        unknown = error.code in unknown_codes and bool(
-            request.metadata.get("non_replayable_on_unknown_failure")
+        unknown = (
+            error.code in unknown_codes
+            and protects_non_idempotent_effect
+            and not explicit_http_rejection
         )
         if unknown:
             allow_switch = bool(request.metadata.get("allow_unknown_effect_backend_switch"))
@@ -807,7 +831,7 @@ class AIInvocationMixin(PromptCacheInvocationMixin):
                     marker: True,
                 },
             )
-        if bool(request.metadata.get("non_replayable")):
+        if bool(request.metadata.get("non_replayable")) and not explicit_http_rejection:
             error = replace(
                 error,
                 retryable=False,
@@ -821,6 +845,7 @@ class AIInvocationMixin(PromptCacheInvocationMixin):
         state: _InvocationState,
         registration: BackendRegistration,
         error: AIErrorInfo,
+        action: _FailureAction,
     ) -> dict[str, Any]:
         return {
             "attempt_no": state.attempts,
@@ -836,7 +861,7 @@ class AIInvocationMixin(PromptCacheInvocationMixin):
             "provider_error_code": _safe_diagnostic_identifier(
                 error.details.get("api_code"), limit=160
             ),
-            "decision": ("retry_or_switch" if error.retryable or error.switch_backend else "stop"),
+            "decision": action.value,
         }
 
     async def _finish_success(
@@ -925,29 +950,46 @@ class AIInvocationMixin(PromptCacheInvocationMixin):
         }
 
     @staticmethod
-    def _must_leave_backend(error: AIErrorInfo) -> bool:
-        return error.code in {
-            AIErrorCode.TIMEOUT,
+    def _failure_action(
+        error: AIErrorInfo,
+        *,
+        backend_attempt: int,
+        max_attempts: int,
+    ) -> _FailureAction:
+        if error.details.get("recovery_required") or error.details.get("non_replayable"):
+            return _FailureAction.STOP
+        if AIInvocationMixin._requires_next_backend(error):
+            return _FailureAction.NEXT_BACKEND
+        if error.switch_backend:
+            return _FailureAction.NEXT_BACKEND
+        if error.retryable and backend_attempt < max_attempts:
+            return _FailureAction.RETRY_SAME_BACKEND
+        if error.retryable:
+            return _FailureAction.NEXT_BACKEND
+        return _FailureAction.STOP
+
+    @staticmethod
+    def _requires_next_backend(error: AIErrorInfo) -> bool:
+        if error.status_code is not None:
+            return True
+        if error.code in {
             AIErrorCode.AUTHENTICATION,
             AIErrorCode.PERMISSION,
             AIErrorCode.QUOTA_EXHAUSTED,
             AIErrorCode.RATE_LIMIT,
+            AIErrorCode.NETWORK,
+            AIErrorCode.REMOTE_5XX,
+            AIErrorCode.TIMEOUT,
+            AIErrorCode.EMPTY_OUTPUT,
+            AIErrorCode.OUTPUT_CONTRACT,
+            AIErrorCode.ADAPTER_INCOMPATIBLE,
+        }:
+            return True
+        return error.code is AIErrorCode.INTERNAL and error.phase in {
+            "adapter",
+            "response",
+            "transport",
         }
-
-    @staticmethod
-    def _may_retry_same_backend(
-        error: AIErrorInfo, backend_attempt: int, max_attempts: int
-    ) -> bool:
-        return (
-            error.retryable
-            and error.code
-            in {
-                AIErrorCode.NETWORK,
-                AIErrorCode.REMOTE_5XX,
-                AIErrorCode.EMPTY_OUTPUT,
-            }
-            and backend_attempt < max_attempts
-        )
 
     @staticmethod
     def _request_capability(request: AIModelRequest) -> str:

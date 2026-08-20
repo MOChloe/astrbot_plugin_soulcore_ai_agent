@@ -171,9 +171,7 @@ class SchemaRecoveryCoordinator:
         if indexes:
             index = indexes[-1]
             plugin_name = (
-                parts[index + 1]
-                if index + 1 < len(parts)
-                else "astrbot_plugin_soulcore_ai_agent"
+                parts[index + 1] if index + 1 < len(parts) else "astrbot_plugin_soulcore_ai_agent"
             )
             return Path(*parts[:index]) / "soulcore_media" / plugin_name
         return self.data_dir / "soulcore_media" / self.database_path.stem

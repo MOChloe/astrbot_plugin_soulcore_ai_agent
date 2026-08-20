@@ -13,6 +13,13 @@ _RELEASE_HEADING = re.compile(
     r"^##\s+v(?P<version>\d+\.\d+\.\d+)\s+-\s+(?P<date>\d{4}-\d{2}-\d{2})\s*$"
 )
 _TITLE_HEADING = re.compile(r"^###\s+(?P<title>\S(?:.*\S)?)\s*$")
+_SEMVER = re.compile(
+    r"^v?(?P<major>0|[1-9]\d*)\."
+    r"(?P<minor>0|[1-9]\d*)\."
+    r"(?P<patch>0|[1-9]\d*)"
+    r"(?:-(?P<prerelease>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+)
 
 
 def parse_public_release_notes(markdown: str) -> list[dict[str, Any]]:
@@ -112,8 +119,31 @@ def _finish_release(items: list[dict[str, Any]], current: dict[str, Any]) -> Non
     items.append(current)
 
 
-def _version_tuple(value: str) -> tuple[int, int, int]:
-    return tuple(int(part) for part in value.removeprefix("v").split("."))  # type: ignore[return-value]
+def _version_tuple(
+    value: str,
+) -> tuple[int, int, int, int, tuple[tuple[int, int, str], ...]]:
+    """Return a SemVer ordering key, including local prerelease candidates."""
+
+    match = _SEMVER.fullmatch(value)
+    if match is None:
+        raise ValueError(f"invalid semantic version: {value}")
+    prerelease = match.group("prerelease")
+    identifiers: list[tuple[int, int, str]] = []
+    if prerelease is not None:
+        for identifier in prerelease.split("."):
+            if identifier.isdigit():
+                if len(identifier) > 1 and identifier.startswith("0"):
+                    raise ValueError(f"invalid semantic version: {value}")
+                identifiers.append((0, int(identifier), ""))
+            else:
+                identifiers.append((1, 0, identifier))
+    return (
+        int(match.group("major")),
+        int(match.group("minor")),
+        int(match.group("patch")),
+        1 if prerelease is None else 0,
+        tuple(identifiers),
+    )
 
 
 __all__ = [

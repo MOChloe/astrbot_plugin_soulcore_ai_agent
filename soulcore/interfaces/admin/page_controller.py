@@ -325,6 +325,7 @@ class SettingsPageActionsMixin:
 
     async def _settings_snapshot(self, profile_id: str, scope: str) -> dict[str, Any]:
         main = await self.profiles.main_config_snapshot(profile_id)
+        background_life = await self.background.quick_setup_life_snapshot(profile_id)
         character = await self.character_models.snapshot(profile_id)
         ai_packages = await self.ai.handle("ai_api_packages", profile_id, {})
         scope_config = await self.profiles.scope_config_snapshot(profile_id, scope)
@@ -338,6 +339,7 @@ class SettingsPageActionsMixin:
         world = await self.background.world_snapshot(profile_id)
         sections = {
             "main": main,
+            "background_life": background_life,
             "character": character,
             "world": world,
             "models": ai_packages,

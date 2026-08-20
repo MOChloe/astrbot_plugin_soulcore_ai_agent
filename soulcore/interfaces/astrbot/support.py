@@ -18,8 +18,9 @@ from ...contracts.runtime_limits import (
 from ...contracts.system_notice import soulcore_system_notice
 from .umo import CapturedUMO, RouteKind
 
-# AstrBot uses this value as the persistent-data directory key.  The public
-# plugin rename must not move existing installations onto an empty database.
+# AstrBot persists plugin state under the name passed to ``get_data_dir``.
+# This namespace predates the public plugin rename and must remain stable so an
+# update continues to open the existing database, credentials and media roots.
 PERSISTENT_DATA_NAMESPACE = "astrbot_plugin_soulcore"
 
 

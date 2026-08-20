@@ -33,8 +33,10 @@ def read_main_core_background_view_sql(
     instance_id: str,
 ) -> MainCoreBackgroundView | None:
     enabled = _read_enabled(conn, profile_id, instance_id)
+    if not enabled:
+        return None
     states = _read_states(conn, profile_id, instance_id)
-    projection = main_core_background_view(
+    return main_core_background_view(
         enabled=enabled,
         world_state=states.get(BackgroundAuthorKind.WORLD),
         life_state=states.get(BackgroundAuthorKind.LIFE_DIRECTION),
@@ -42,7 +44,6 @@ def read_main_core_background_view_sql(
         story_sources=_read_stories(conn, profile_id, instance_id),
         timeline=_read_timeline(conn, profile_id, instance_id),
     )
-    return projection if enabled or _has_content(projection) else None
 
 
 def _read_enabled(conn: sqlite3.Connection, profile_id: str, instance_id: str) -> bool:
@@ -174,18 +175,6 @@ def _read_timeline(
     for row in (*recent_rows, *active_leftover_rows):
         rows_by_id.setdefault(int(row["event_id"]), row)
     return tuple(timeline_event_from_row(row) for row in rows_by_id.values())
-
-
-def _has_content(projection: MainCoreBackgroundView) -> bool:
-    return any(
-        (
-            projection.world_changes,
-            projection.life_direction,
-            projection.current_view,
-            projection.story_sources,
-            projection.timeline,
-        )
-    )
 
 
 __all__ = ["read_main_core_background_view_sql"]

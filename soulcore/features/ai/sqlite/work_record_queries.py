@@ -112,6 +112,7 @@ class AiWorkRecordQueries:
 
     @staticmethod
     def _summary_sql(clauses: list[str]) -> str:
+        transitions = AiWorkRecordQueries._attempt_transitions_sql()
         return f"""SELECT workflow.*,
         instance.scope AS object_scope,
         instance.platform_id AS object_platform_id,
@@ -137,10 +138,12 @@ class AiWorkRecordQueries:
           JOIN ai_work_nodes node ON node.node_id = attempt.node_id
           WHERE node.workflow_id = workflow.workflow_id
             AND attempt.sent_at IS NOT NULL) AS provider_send_count,
-        (SELECT COUNT(*) FROM ai_provider_attempts attempt
-          JOIN ai_work_nodes node ON node.node_id = attempt.node_id
-          WHERE node.workflow_id = workflow.workflow_id
-            AND attempt.sent_at IS NOT NULL AND attempt.attempt_no > 1) AS retry_count,
+        (SELECT COUNT(*) FROM {transitions}
+          WHERE previous_backend_id IS NOT NULL
+            AND backend_id = previous_backend_id) AS retry_count,
+        (SELECT COUNT(*) FROM {transitions}
+          WHERE previous_backend_id IS NOT NULL
+            AND backend_id <> previous_backend_id) AS model_switch_count,
         (SELECT COALESCE(SUM(attempt.input_tokens), 0)
           FROM ai_provider_attempts attempt
           JOIN ai_work_nodes node ON node.node_id = attempt.node_id
@@ -210,6 +213,21 @@ class AiWorkRecordQueries:
         ORDER BY workflow.started_at DESC, workflow.workflow_id DESC LIMIT ?"""
 
     @staticmethod
+    def _attempt_transitions_sql() -> str:
+        return """(
+            SELECT COALESCE(NULLIF(sent_attempt.backend_id, ''), sent_attempt.model_id)
+                AS backend_id,
+              LAG(COALESCE(NULLIF(sent_attempt.backend_id, ''), sent_attempt.model_id)) OVER (
+                PARTITION BY sent_attempt.node_id, sent_attempt.round_no
+                ORDER BY sent_attempt.attempt_no, sent_attempt.attempt_id
+              ) AS previous_backend_id
+            FROM ai_provider_attempts sent_attempt
+            JOIN ai_work_nodes sent_node ON sent_node.node_id = sent_attempt.node_id
+            WHERE sent_node.workflow_id = workflow.workflow_id
+              AND sent_attempt.sent_at IS NOT NULL
+          ) AS attempt_transition"""
+
+    @staticmethod
     def _issue_filter_sql(issue_type: str, issues_only: bool) -> tuple[str, list[Any]]:
         normalized = str(issue_type or "").strip().lower()
         if normalized == "fallback":
@@ -218,10 +236,19 @@ class AiWorkRecordQueries:
                 [],
             )
         if normalized == "retried":
+            transitions = AiWorkRecordQueries._attempt_transitions_sql()
             return (
-                """EXISTS (SELECT 1 FROM ai_work_nodes n JOIN ai_provider_attempts a
-                ON a.node_id = n.node_id WHERE n.workflow_id = workflow.workflow_id
-                AND a.sent_at IS NOT NULL AND a.attempt_no > 1)""",
+                f"""EXISTS (SELECT 1 FROM {transitions}
+                WHERE previous_backend_id IS NOT NULL
+                  AND backend_id = previous_backend_id)""",
+                [],
+            )
+        if normalized == "switched":
+            transitions = AiWorkRecordQueries._attempt_transitions_sql()
+            return (
+                f"""EXISTS (SELECT 1 FROM {transitions}
+                WHERE previous_backend_id IS NOT NULL
+                  AND backend_id <> previous_backend_id)""",
                 [],
             )
         if normalized:
