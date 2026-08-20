@@ -66,7 +66,7 @@ def _begin_initialization_sql(
 ) -> tuple[InstanceInitializationDecision, bool]:
     instance, background = _initialization_rows(conn, profile_id, instance_id, now)
     state = InstanceInitializationState(str(instance["initialization_state"]))
-    if not bool(background["enabled"]):
+    if not bool(background["background_life_enabled"]):
         return _disabled_background_decision(conn, profile_id, instance_id, state, now)
     background_state = InstanceInitializationState(str(background["initialization_state"]))
     if background_state is InstanceInitializationState.READY:
@@ -108,9 +108,10 @@ def _initialization_rows(
         raise KeyError((profile_id, instance_id))
     seed_instance_runtime_rows(conn, profile_id, instance_id, now)
     background = conn.execute(
-        """SELECT enabled, initialization_state
-        FROM background_instances
-        WHERE profile_id = ? AND instance_id = ?""",
+        """SELECT profile.background_life_enabled, background.initialization_state
+        FROM background_instances background
+        JOIN role_profiles profile ON profile.profile_id = background.profile_id
+        WHERE background.profile_id = ? AND background.instance_id = ?""",
         (profile_id, instance_id),
     ).fetchone()
     if background is None:

@@ -142,12 +142,13 @@ class SqliteBackgroundRepository(
 
         def operation(conn: sqlite3.Connection) -> int:
             instance = conn.execute(
-                """SELECT enabled, foreground_lease_until
-                FROM background_instances
-                WHERE profile_id = ? AND instance_id = ?""",
+                """SELECT profile.background_life_enabled, instance.foreground_lease_until
+                FROM background_instances instance
+                JOIN role_profiles profile ON profile.profile_id = instance.profile_id
+                WHERE instance.profile_id = ? AND instance.instance_id = ?""",
                 (profile_id, instance_id),
             ).fetchone()
-            if instance is None or not bool(instance["enabled"]):
+            if instance is None or not bool(instance["background_life_enabled"]):
                 return 0
             lease_until = _parse(instance["foreground_lease_until"])
             if lease_until is not None and lease_until > _now():
@@ -245,8 +246,10 @@ class SqliteBackgroundRepository(
         prompt_now: datetime,
     ) -> BackgroundAuthorInput:
         instance = conn.execute(
-            """SELECT * FROM background_instances
-            WHERE profile_id = ? AND instance_id = ?""",
+            """SELECT instance.*, profile.background_life_enabled AS role_background_enabled
+            FROM background_instances instance
+            JOIN role_profiles profile ON profile.profile_id = instance.profile_id
+            WHERE instance.profile_id = ? AND instance.instance_id = ?""",
             (profile_id, instance_id),
         ).fetchone()
         state = conn.execute(
@@ -266,12 +269,11 @@ class SqliteBackgroundRepository(
         ).fetchone()
         if instance is None or state is None or core_state is None:
             raise KeyError((profile_id, instance_id, kind.value))
-        if not bool(instance["enabled"]):
+        if not bool(instance["role_background_enabled"]):
             raise BackgroundDisabled("background simulation is disabled")
         lease_until = _parse(instance["foreground_lease_until"])
         if lease_until is not None and lease_until > prompt_now:
             raise BackgroundDraftStale("foreground turn owns the character timeline")
-
         reference_rows = cls._reference_state_rows(
             conn,
             profile_id,

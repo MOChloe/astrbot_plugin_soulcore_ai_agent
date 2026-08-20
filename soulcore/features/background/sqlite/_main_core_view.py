@@ -48,11 +48,13 @@ def read_main_core_background_view_sql(
 
 def _read_enabled(conn: sqlite3.Connection, profile_id: str, instance_id: str) -> bool:
     row = conn.execute(
-        """SELECT enabled FROM background_instances
-        WHERE profile_id = ? AND instance_id = ?""",
+        """SELECT profile.background_life_enabled
+        FROM background_instances instance
+        JOIN role_profiles profile ON profile.profile_id = instance.profile_id
+        WHERE instance.profile_id = ? AND instance.instance_id = ?""",
         (profile_id, instance_id),
     ).fetchone()
-    return bool(row is not None and int(row["enabled"] or 0))
+    return bool(row is not None and int(row["background_life_enabled"] or 0))
 
 
 def _read_current_view(

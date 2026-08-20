@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from ....storage.sqlite.background_projection import ensure_background_instance_sql
 from ....storage.sqlite.codec import _dt, _load, _now, _parse
 from ....storage.sqlite.foreground_activity import foreground_activity_is_active_sql
 from ..domain import AUTHOR_ORDER, BackgroundAuthorKind
-
-SetBackgroundEnabled = Callable[..., int]
 
 
 class QuickSetupLifeMixin:
@@ -46,7 +44,6 @@ class QuickSetupLifeMixin:
                     expected_version=expected_version,
                     expected_world_revision=expected_world_revision,
                     now=now,
-                    set_background_enabled=self._set_background_enabled_for_quick_setup,
                 )
             )
         )
@@ -57,14 +54,6 @@ class QuickSetupLifeMixin:
             "applied": applied,
             "life": await self.quick_setup_life_snapshot(profile_id),
         }
-
-    @staticmethod
-    def _set_background_enabled_for_quick_setup(
-        conn: sqlite3.Connection,
-        instance: sqlite3.Row,
-        **values: Any,
-    ) -> int:
-        raise NotImplementedError
 
 
 def quick_setup_life_snapshot_sql(
@@ -83,22 +72,6 @@ def quick_setup_life_snapshot_sql(
         WHERE profile_id = ?""",
         (profile_id,),
     ).fetchone()
-    default_enabled = bool(profile["background_life_enabled"])
-    instances = conn.execute(
-        """SELECT COUNT(*) AS total,
-            COALESCE(SUM(CASE WHEN COALESCE(background.enabled, ?) = 1 THEN 1 ELSE 0 END), 0)
-                AS enabled_total,
-            COALESCE(SUM(CASE
-                WHEN background.instance_id IS NOT NULL AND background.enabled != ?
-                THEN 1 ELSE 0 END), 0)
-                AS difference_total
-        FROM character_instances instance
-        LEFT JOIN background_instances background
-          ON background.profile_id = instance.profile_id
-         AND background.instance_id = instance.instance_id
-        WHERE instance.profile_id = ?""",
-        (int(default_enabled), int(default_enabled), profile_id),
-    ).fetchone()
     started = conn.execute(
         """SELECT EXISTS(
             SELECT 1 FROM background_instances
@@ -113,13 +86,10 @@ def quick_setup_life_snapshot_sql(
         (profile_id, profile_id, profile_id, profile_id),
     ).fetchone()
     return {
-        "enabled": default_enabled,
+        "enabled": bool(profile["background_life_enabled"]),
         "version": int(profile["background_life_version"]),
         "initial_direction": str(world["life_direction"] or "") if world is not None else "",
         "world_revision": int(world["revision"]) if world is not None else 0,
-        "total_instances": int(instances["total"] or 0),
-        "enabled_instances": int(instances["enabled_total"] or 0),
-        "mixed": bool(instances["difference_total"]),
         "already_started": bool(started["value"]),
     }
 
@@ -133,16 +103,14 @@ def quick_setup_configure_life_sql(
     expected_version: int,
     expected_world_revision: int,
     now: str,
-    set_background_enabled: SetBackgroundEnabled,
 ) -> bool:
-    profile, world, character_rows, instance_rows = _quick_setup_life_rows(conn, profile_id)
+    profile, world, character_rows = _quick_setup_life_rows(conn, profile_id)
     current_direction = str(world["life_direction"] or "") if world is not None else ""
     desired_direction = direction if enabled else current_direction
     current_world_revision = int(world["revision"]) if world is not None else 0
+    enabled_changed = bool(profile["background_life_enabled"]) != bool(enabled)
     if _quick_setup_life_is_current(
         profile,
-        character_rows,
-        instance_rows,
         enabled=enabled,
         current_direction=current_direction,
         desired_direction=desired_direction,
@@ -168,9 +136,9 @@ def quick_setup_configure_life_sql(
         profile_id,
         character_rows,
         enabled=enabled,
+        enabled_changed=enabled_changed,
         direction=desired_direction,
         now=now,
-        set_background_enabled=set_background_enabled,
     )
     _update_profile_life_default(conn, profile_id, enabled, expected_version, now)
     return True
@@ -178,7 +146,7 @@ def quick_setup_configure_life_sql(
 
 def _quick_setup_life_rows(
     conn: sqlite3.Connection, profile_id: str
-) -> tuple[sqlite3.Row, sqlite3.Row | None, list[sqlite3.Row], list[sqlite3.Row]]:
+) -> tuple[sqlite3.Row, sqlite3.Row | None, list[sqlite3.Row]]:
     profile = conn.execute(
         """SELECT background_life_enabled, background_life_version
         FROM role_profiles WHERE profile_id = ?""",
@@ -196,32 +164,18 @@ def _quick_setup_life_rows(
         WHERE profile_id = ? ORDER BY instance_id""",
         (profile_id,),
     ).fetchall()
-    instance_rows = conn.execute(
-        """SELECT * FROM background_instances
-        WHERE profile_id = ? ORDER BY instance_id""",
-        (profile_id,),
-    ).fetchall()
-    return profile, world, character_rows, instance_rows
+    return profile, world, character_rows
 
 
 def _quick_setup_life_is_current(
     profile: sqlite3.Row,
-    character_rows: Sequence[sqlite3.Row],
-    instance_rows: Sequence[sqlite3.Row],
     *,
     enabled: bool,
     current_direction: str,
     desired_direction: str,
 ) -> bool:
-    return (
-        bool(profile["background_life_enabled"]) == bool(enabled)
-        and current_direction == desired_direction
-        and _life_instances_match(
-            character_rows,
-            instance_rows,
-            enabled=enabled,
-            direction=desired_direction,
-        )
+    return bool(profile["background_life_enabled"]) == bool(enabled) and (
+        current_direction == desired_direction
     )
 
 
@@ -244,26 +198,26 @@ def _configure_life_instances(
     character_rows: Sequence[sqlite3.Row],
     *,
     enabled: bool,
+    enabled_changed: bool,
     direction: str,
     now: str,
-    set_background_enabled: SetBackgroundEnabled,
 ) -> None:
     for character in character_rows:
         ensure_background_instance_sql(conn, profile_id, str(character["instance_id"]), now)
-    instances = conn.execute(
-        """SELECT * FROM background_instances
-        WHERE profile_id = ? ORDER BY instance_id""",
-        (profile_id,),
-    ).fetchall()
-    for instance in instances:
-        set_background_enabled(
-            conn,
-            instance,
-            enabled=enabled,
-            now=now,
-            reason="quick_setup_life_changed",
-            conflict_message="角色生活设置已变化，请刷新后重试",
-        )
+    if enabled_changed:
+        instances = conn.execute(
+            """SELECT * FROM background_instances
+            WHERE profile_id = ? ORDER BY instance_id""",
+            (profile_id,),
+        ).fetchall()
+        for instance in instances:
+            _transition_background_instance_sql(
+                conn,
+                instance,
+                enabled=enabled,
+                now=now,
+                reason="role_background_enabled_changed",
+            )
     _refresh_uninitialized_life_seeds_sql(
         conn,
         profile_id,
@@ -290,30 +244,6 @@ def _update_profile_life_default(
     )
     if cursor.rowcount != 1:
         raise ValueError("角色生活设置已变化，请刷新后重试")
-
-
-def _life_instances_match(
-    character_rows: Sequence[sqlite3.Row],
-    instance_rows: Sequence[sqlite3.Row],
-    *,
-    enabled: bool,
-    direction: str,
-) -> bool:
-    by_instance = {str(row["instance_id"]): row for row in instance_rows}
-    if len(by_instance) != len(character_rows):
-        return False
-    for character in character_rows:
-        instance = by_instance.get(str(character["instance_id"]))
-        if instance is None or bool(instance["enabled"]) != bool(enabled):
-            return False
-        seed_changed = (
-            enabled
-            and str(instance["initialization_state"]) == "UNINITIALIZED"
-            and str(instance["initial_life_direction"] or "") != direction
-        )
-        if seed_changed:
-            return False
-    return True
 
 
 def _save_quick_setup_life_direction_sql(
@@ -375,7 +305,6 @@ def _refresh_uninitialized_life_seeds_sql(
             SELECT 1 FROM background_instances instance
             WHERE instance.profile_id = background_author_states.profile_id
               AND instance.instance_id = background_author_states.instance_id
-              AND instance.enabled = 1
               AND instance.initialization_state = 'UNINITIALIZED'
           )""",
         (now, now, now, profile_id),
@@ -502,22 +431,19 @@ def _cancel_tasks_sql(
         )
 
 
-def _set_background_enabled_sql(
+def _transition_background_instance_sql(
     conn: sqlite3.Connection,
     instance: sqlite3.Row,
     *,
     enabled: bool,
     now: str,
     reason: str,
-    conflict_message: str = "背景设置已变化，请刷新后重试",
 ) -> int:
-    """Apply one enable transition while preserving all generated life content."""
+    """Apply a role-wide enable transition to one instance's active work."""
 
     profile_id = str(instance["profile_id"])
     instance_id = str(instance["instance_id"])
     current_version = int(instance["config_version"])
-    if bool(instance["enabled"]) == bool(enabled):
-        return current_version
     _synchronize_character_initialization_gate_sql(
         conn,
         instance,
@@ -573,17 +499,9 @@ def _set_background_enabled_sql(
         )
     cursor = conn.execute(
         """UPDATE background_instances
-        SET enabled = ?, config_version = config_version + 1,
-            disabled_at = CASE WHEN ? = 0 THEN ? ELSE disabled_at END,
-            resumed_at = CASE WHEN ? = 1 THEN ? ELSE resumed_at END,
-            updated_at = ?
+        SET config_version = config_version + 1, updated_at = ?
         WHERE profile_id = ? AND instance_id = ? AND config_version = ?""",
         (
-            int(enabled),
-            int(enabled),
-            now,
-            int(enabled),
-            now,
             now,
             profile_id,
             instance_id,
@@ -591,7 +509,7 @@ def _set_background_enabled_sql(
         ),
     )
     if cursor.rowcount != 1:
-        raise ValueError(conflict_message)
+        raise ValueError("角色生活设置已变化，请刷新后重试")
     return current_version + 1
 
 
@@ -829,14 +747,6 @@ def _load_background_workspace_sql(
 
 
 class BackgroundAdminActions(QuickSetupLifeMixin):
-    @staticmethod
-    def _set_background_enabled_for_quick_setup(
-        conn: sqlite3.Connection,
-        instance: sqlite3.Row,
-        **values: Any,
-    ) -> int:
-        return _set_background_enabled_sql(conn, instance, **values)
-
     async def invalidate_profile_seed(self, profile_id: str) -> int:
         now = _dt(_now())
         return int(
@@ -854,34 +764,6 @@ class BackgroundAdminActions(QuickSetupLifeMixin):
                 lambda conn: _load_background_workspace_sql(conn, profile_id, instance_id)
             )
         )
-
-    async def set_background_enabled(
-        self,
-        profile_id: str,
-        instance_id: str,
-        *,
-        enabled: bool,
-        expected_version: int,
-    ) -> int:
-        await self.ensure_instance(profile_id, instance_id)
-        now = _dt(_now())
-
-        def operation(conn: sqlite3.Connection) -> int:
-            instance = self._require_version(
-                conn,
-                profile_id,
-                instance_id,
-                expected_version,
-            )
-            return _set_background_enabled_sql(
-                conn,
-                instance,
-                enabled=enabled,
-                now=now,
-                reason="background_enabled_changed",
-            )
-
-        return int(await self.uow.run(operation))
 
     async def save_background_config(
         self,
@@ -984,13 +866,20 @@ class BackgroundAdminActions(QuickSetupLifeMixin):
         now = _dt(_now())
 
         def operation(conn: sqlite3.Connection) -> dict[str, Any]:
-            instance = self._require_version(
+            self._require_version(
                 conn,
                 profile_id,
                 instance_id,
                 expected_version,
             )
-            if not bool(instance["enabled"]):
+            profile = conn.execute(
+                """SELECT background_life_enabled FROM role_profiles
+                WHERE profile_id = ?""",
+                (profile_id,),
+            ).fetchone()
+            if profile is None:
+                raise KeyError(profile_id)
+            if not bool(profile["background_life_enabled"]):
                 raise ValueError("背景推演已关闭")
             placeholders = ",".join("?" for _ in kinds)
             active_rows = conn.execute(

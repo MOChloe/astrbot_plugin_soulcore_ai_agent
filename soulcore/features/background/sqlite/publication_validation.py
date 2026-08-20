@@ -199,8 +199,11 @@ class BackgroundPublicationValidationMixin(BackgroundPublicationForegroundMixin)
         context: PublishContext,
     ) -> _PublishFenceRows:
         instance = conn.execute(
-            """SELECT * FROM background_instances
-            WHERE profile_id = ? AND instance_id = ?""",
+            """SELECT instance.*,
+                profile.background_life_enabled AS role_background_enabled
+            FROM background_instances instance
+            JOIN role_profiles profile ON profile.profile_id = instance.profile_id
+            WHERE instance.profile_id = ? AND instance.instance_id = ?""",
             (context.profile_id, context.instance_id),
         ).fetchone()
         state = conn.execute(
@@ -232,7 +235,7 @@ class BackgroundPublicationValidationMixin(BackgroundPublicationForegroundMixin)
         rows: _PublishFenceRows,
         context: PublishContext,
     ) -> None:
-        if not bool(rows.instance["enabled"]):
+        if not bool(rows.instance["role_background_enabled"]):
             raise BackgroundDisabled("background simulation was disabled")
         lease_until = _parse(rows.instance["foreground_lease_until"])
         if lease_until is not None and lease_until > context.published_at:

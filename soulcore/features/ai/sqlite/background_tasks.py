@@ -423,13 +423,16 @@ class AiBackgroundTaskRecords:
         instance_id: str,
     ) -> sqlite3.Row | None:
         instance = conn.execute(
-            """SELECT * FROM background_instances
-            WHERE profile_id = ? AND instance_id = ?""",
+            """SELECT instance.*,
+                profile.background_life_enabled AS role_background_enabled
+            FROM background_instances instance
+            JOIN role_profiles profile ON profile.profile_id = instance.profile_id
+            WHERE instance.profile_id = ? AND instance.instance_id = ?""",
             (profile_id, instance_id),
         ).fetchone()
         if (
             instance is None
-            or not bool(instance["enabled"])
+            or not bool(instance["role_background_enabled"])
             or not bool(instance["proactive_frame_prewarm_enabled"])
             or str(instance["initialization_state"]) != "READY"
             or str(instance["initialization_step"]) != "READY"

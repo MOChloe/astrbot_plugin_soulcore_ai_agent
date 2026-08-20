@@ -58,7 +58,7 @@ def ensure_background_instance_sql(
     """Create one independent world line and all five author slots if absent."""
 
     seed = conn.execute(
-        """SELECT profile.background_life_enabled, world.life_direction
+        """SELECT world.life_direction
         FROM role_profiles profile
         LEFT JOIN world_definitions world ON world.profile_id = profile.profile_id
         WHERE profile.profile_id = ?""",
@@ -66,18 +66,16 @@ def ensure_background_instance_sql(
     ).fetchone()
     if seed is None:
         raise KeyError(profile_id)
-    enabled = bool(seed["background_life_enabled"])
     initial_direction = str(seed["life_direction"] or "")
     conn.execute(
         """INSERT INTO background_instances(
-            profile_id, instance_id, enabled, initial_life_direction,
+            profile_id, instance_id, initial_life_direction,
             ordinary_min_minutes, ordinary_max_minutes, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(profile_id, instance_id) DO NOTHING""",
         (
             profile_id,
             instance_id,
-            int(enabled),
             initial_direction,
             DEFAULT_ORDINARY_MIN_MINUTES,
             DEFAULT_ORDINARY_MAX_MINUTES,

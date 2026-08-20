@@ -53,6 +53,8 @@ WHERE t.status IN ('READY', 'SCHEDULED', 'RETRY_WAIT')
     OR EXISTS (
       SELECT 1
       FROM background_instances instance
+      JOIN role_profiles background_profile
+        ON background_profile.profile_id = instance.profile_id
       JOIN instance_core_state core
         ON core.profile_id = instance.profile_id
        AND core.instance_id = instance.instance_id
@@ -66,7 +68,7 @@ WHERE t.status IN ('READY', 'SCHEDULED', 'RETRY_WAIT')
        AND opening.instance_id = instance.instance_id
       WHERE instance.profile_id = t.profile_id
         AND instance.instance_id = t.instance_id
-        AND instance.enabled = 1
+        AND background_profile.background_life_enabled = 1
         AND instance.initialization_state <> 'UNINITIALIZED'
         AND instance.foreground_lease_count = 0
         AND (

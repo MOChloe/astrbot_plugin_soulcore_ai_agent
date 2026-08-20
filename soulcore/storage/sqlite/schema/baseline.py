@@ -414,7 +414,6 @@ CREATE TABLE background_initialization_openings (
 CREATE TABLE background_instances (
         profile_id TEXT NOT NULL,
         instance_id TEXT NOT NULL,
-        enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0, 1)),
         initialization_state TEXT NOT NULL DEFAULT 'UNINITIALIZED'
             CHECK(initialization_state IN ('UNINITIALIZED', 'INITIALIZING', 'READY')),
         initialization_step TEXT NOT NULL DEFAULT 'WORLD'
@@ -473,8 +472,6 @@ CREATE TABLE background_instances (
         timeline_version INTEGER NOT NULL DEFAULT 0 CHECK(timeline_version >= 0),
         view_version INTEGER NOT NULL DEFAULT 0 CHECK(view_version >= 0),
         config_version INTEGER NOT NULL DEFAULT 1 CHECK(config_version >= 1),
-        disabled_at TEXT,
-        resumed_at TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL, proactive_frame_prewarm_enabled INTEGER NOT NULL DEFAULT 1
         CHECK(proactive_frame_prewarm_enabled IN (0, 1)), last_proactive_frame_attempt_at TEXT,

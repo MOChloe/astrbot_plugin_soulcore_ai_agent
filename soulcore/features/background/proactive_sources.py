@@ -186,10 +186,10 @@ LEFT JOIN instance_chat_policies AS chat_policy
   ON chat_policy.profile_id = candidate.profile_id
  AND chat_policy.instance_id = candidate.instance_id
 WHERE profile.enabled = 1
+  AND profile.background_life_enabled = 1
   AND COALESCE(chat_policy.soulcore_enabled, 1) = 1
   AND instance.readiness = 'READY'
   AND instance.initialization_state = 'READY'
-  AND background.enabled = 1
   AND background.proactive_frame_prewarm_enabled = 1
   AND background.initialization_state = 'READY'
   AND background.initialization_step = 'READY'

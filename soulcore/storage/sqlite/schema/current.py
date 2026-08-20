@@ -12,7 +12,7 @@ from types import MappingProxyType
 
 from .baseline import FINGERPRINT, SQL
 
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 OLDEST_MIGRATABLE_SCHEMA_VERSION = 1
 SCHEMA_TABLE = "soulcore_schema"
 
@@ -57,6 +57,11 @@ SCHEMA_IDENTITIES = MappingProxyType(
             4,
             "ef4a4e0fcb80dc589addb702d27c5e867c033aa8a10f0eef5b3f326944f2fe3f",
             "57d637e89074f293432b19ad6eb31fe3370a4bb9505ebf37d461b86cce946e27",
+        ),
+        5: SchemaIdentity(
+            5,
+            "d6d2947857da2d2edea0016a878ce4ce420c1ff307b3e8bfe63cd84f5e5556d4",
+            "154d912538d7c2950616a8a0f5c1113802d38864da1cd04ce3bcb24dba2dcf9e",
         ),
     }
 )

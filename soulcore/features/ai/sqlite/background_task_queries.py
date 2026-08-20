@@ -40,13 +40,15 @@ DUE_BACKGROUND_SLOTS_SQL = f"""WITH eligible AS (
   JOIN background_instances AS instance
     ON instance.profile_id = state.profile_id
    AND instance.instance_id = state.instance_id
+  JOIN role_profiles AS profile
+    ON profile.profile_id = state.profile_id
   JOIN instance_core_state AS core
     ON core.profile_id = state.profile_id
    AND core.instance_id = state.instance_id
   LEFT JOIN background_initialization_openings AS opening
     ON opening.profile_id = state.profile_id
    AND opening.instance_id = state.instance_id
-  WHERE instance.enabled = 1
+  WHERE profile.background_life_enabled = 1
   AND instance.initialization_state <> 'UNINITIALIZED'
   AND instance.foreground_lease_count = 0
   AND (

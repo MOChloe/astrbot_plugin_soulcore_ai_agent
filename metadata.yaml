@@ -1,7 +1,7 @@
 name: "astrbot_plugin_soulcore_ai_agent"
 display_name: "SoulCore AI Agent"
 author: "Chloe"
-version: "1.0.3"
+version: "1.0.4"
 short_desc: "为长期角色扮演设计的独立 Agent，自动整理并延续角色需要的上下文，无需手动维护。"
 desc: "SoulCore AI Agent 是为长期角色扮演设计的独立运行系统，会自动整理并延续角色需要的上下文，用户只需正常聊天。系统统一处理角色设定、长期记忆、关系状态、主动联系与媒体表达。它支持与仅通过 AstrBot 标准注册指令工作的插件共同使用；这类指令及其插件回复均不会写入 SoulCore，可正常调用。会读写对话上下文或介入普通对话链路的插件则不受支持。"
 repo: "https://github.com/MOChloe/astrbot_plugin_soulcore_ai_agent"

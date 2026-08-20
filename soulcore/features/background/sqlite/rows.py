@@ -144,7 +144,6 @@ def current_view_from_row(row: RowData | None) -> RoleCurrentView:
 
 def instance_config_from_row(row: RowData) -> dict[str, Any]:
     fields = (
-        "enabled",
         "proactive_frame_prewarm_enabled",
         "initial_life_direction",
         "default_backend_id",
@@ -167,7 +166,6 @@ def instance_config_from_row(row: RowData) -> dict[str, Any]:
     result = {name: row[name] for name in fields}
     for name in ("simulated_through_at", "last_foreground_at"):
         result[name] = _parse(result[name])
-    result["enabled"] = bool(result["enabled"])
     result["proactive_frame_prewarm_enabled"] = bool(result["proactive_frame_prewarm_enabled"])
     return result
 

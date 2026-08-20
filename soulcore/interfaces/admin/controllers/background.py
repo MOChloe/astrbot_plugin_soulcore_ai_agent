@@ -128,8 +128,6 @@ class BackgroundAdminController:
         await self.profiles.require_role_instance(profile_id, instance_id)
         expected = _required_int(payload, "expected_version")
         handlers = {
-            "enable": self._toggle_background,
-            "disable": self._toggle_background,
             "save_config": self._save_config,
             "wake": self._wake_authors,
             "wake_all": self._wake_authors,
@@ -141,23 +139,6 @@ class BackgroundAdminController:
         result = await handler(profile_id, instance_id, action, payload, expected)
         self.scheduler.notify()
         return result
-
-    async def _toggle_background(
-        self,
-        profile_id: str,
-        instance_id: str,
-        action: str,
-        payload: Mapping[str, Any],
-        expected: int,
-    ) -> dict[str, Any]:
-        del payload
-        version = await self.repository.set_background_enabled(
-            profile_id,
-            instance_id,
-            enabled=action == "enable",
-            expected_version=expected,
-        )
-        return {"ok": True, "version": version}
 
     async def _save_config(
         self,
@@ -386,7 +367,6 @@ def _timeline_views(value: Any) -> list[dict[str, Any]]:
 
 def _workspace_status(instance: Mapping[str, Any]) -> dict[str, Any]:
     return {
-        "enabled": bool(instance.get("enabled")),
         "initialization_state": _text(instance.get("initialization_state")),
         "simulated_through_at": instance.get("simulated_through_at"),
         "last_foreground_at": instance.get("last_foreground_at"),

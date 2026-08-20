@@ -178,7 +178,7 @@ PAGE_ROUTES = (
         "background_action",
         "background_action",
         ("POST",),
-        "Apply one world-seed edit or versioned background enable, schedule, wake or reset action",
+        "Apply one world-seed edit or versioned background schedule, wake or reset action",
     ),
     PageRoute(
         "player_profile_snapshot",

@@ -122,8 +122,145 @@ def _migrate_v3_to_v4(connection: sqlite3.Connection) -> None:
     connection.execute("DROP TABLE instance_chat_policies_v3")
 
 
+def _migrate_v4_to_v5(connection: sqlite3.Connection) -> None:
+    """Remove the retired per-conversation background enable state."""
+
+    now_sql = "CURRENT_TIMESTAMP"
+    connection.execute(
+        f"""UPDATE role_profiles AS profile
+        SET background_life_enabled = 1,
+            background_life_version = background_life_version + 1,
+            updated_at = {now_sql}
+        WHERE background_life_enabled = 0
+          AND EXISTS (
+            SELECT 1 FROM background_instances background
+            WHERE background.profile_id = profile.profile_id
+              AND background.enabled = 1
+          )"""
+    )
+    connection.execute(
+        f"""UPDATE ai_workflows
+        SET status = 'CANCELLED', final_error_code = 'BACKGROUND_POLICY_CHANGED',
+            final_message = 'background enable policy became role-wide',
+            finished_at = {now_sql}, updated_at = {now_sql}, version = version + 1
+        WHERE status = 'RUNNING' AND workflow_id IN (
+            SELECT workflow_id FROM ai_tasks
+            WHERE task_type = 'BACKGROUND_AUTHOR'
+              AND workflow_id IS NOT NULL
+              AND status NOT IN (
+                'RUNNING','PAUSE_REQUESTED','CANCEL_REQUESTED',
+                'DEFERRED','SUCCEEDED','FAILED','CANCELLED'
+              )
+        )"""
+    )
+    connection.execute(
+        f"""UPDATE ai_tasks
+        SET status = CASE
+                WHEN status IN ('RUNNING','PAUSE_REQUESTED','CANCEL_REQUESTED')
+                THEN 'CANCEL_REQUESTED' ELSE 'CANCELLED' END,
+            last_error = 'background enable policy became role-wide',
+            finished_at = CASE
+                WHEN status IN ('RUNNING','PAUSE_REQUESTED','CANCEL_REQUESTED')
+                THEN finished_at ELSE {now_sql} END,
+            lease_owner = CASE
+                WHEN status IN ('RUNNING','PAUSE_REQUESTED','CANCEL_REQUESTED')
+                THEN lease_owner ELSE NULL END,
+            lease_until = CASE
+                WHEN status IN ('RUNNING','PAUSE_REQUESTED','CANCEL_REQUESTED')
+                THEN lease_until ELSE NULL END,
+            updated_at = {now_sql}, version = version + 1
+        WHERE task_type = 'BACKGROUND_AUTHOR'
+          AND status NOT IN ('DEFERRED','SUCCEEDED','FAILED','CANCELLED')"""
+    )
+    connection.execute(
+        f"""UPDATE background_author_states
+        SET status = 'IDLE', active_task_id = NULL,
+            generation = generation + 1,
+            schedule_version = schedule_version + 1,
+            last_error = '', updated_at = {now_sql}"""
+    )
+    connection.execute(
+        f"""UPDATE background_instances
+        SET config_version = config_version + 1, updated_at = {now_sql}"""
+    )
+    connection.execute(
+        f"""UPDATE character_instances AS character
+        SET initialization_state = CASE
+                WHEN (
+                    SELECT profile.background_life_enabled
+                    FROM role_profiles profile
+                    WHERE profile.profile_id = character.profile_id
+                ) = 1
+                AND (
+                    SELECT background.initialization_state
+                    FROM background_instances background
+                    WHERE background.profile_id = character.profile_id
+                      AND background.instance_id = character.instance_id
+                ) IN ('UNINITIALIZED','INITIALIZING')
+                THEN (
+                    SELECT background.initialization_state
+                    FROM background_instances background
+                    WHERE background.profile_id = character.profile_id
+                      AND background.instance_id = character.instance_id
+                )
+                ELSE 'READY' END,
+            initialization_completed_at = CASE
+                WHEN (
+                    SELECT profile.background_life_enabled
+                    FROM role_profiles profile
+                    WHERE profile.profile_id = character.profile_id
+                ) = 1
+                AND (
+                    SELECT background.initialization_state
+                    FROM background_instances background
+                    WHERE background.profile_id = character.profile_id
+                      AND background.instance_id = character.instance_id
+                ) IN ('UNINITIALIZED','INITIALIZING')
+                THEN NULL ELSE COALESCE(initialization_completed_at, {now_sql}) END,
+            updated_at = {now_sql}
+        WHERE EXISTS (
+            SELECT 1 FROM background_instances background
+            WHERE background.profile_id = character.profile_id
+              AND background.instance_id = character.instance_id
+        )"""
+    )
+    connection.execute(
+        f"""UPDATE background_author_states AS author
+        SET next_due_at = {now_sql}, hard_due_at = {now_sql},
+            schedule_version = schedule_version + 1, updated_at = {now_sql}
+        WHERE EXISTS (
+            SELECT 1
+            FROM background_instances background
+            JOIN role_profiles profile ON profile.profile_id = background.profile_id
+            LEFT JOIN background_initialization_openings opening
+              ON opening.profile_id = background.profile_id
+             AND opening.instance_id = background.instance_id
+            WHERE background.profile_id = author.profile_id
+              AND background.instance_id = author.instance_id
+              AND profile.background_life_enabled = 1
+              AND author.author_kind = CASE background.initialization_step
+                WHEN 'WORLD' THEN 'WORLD'
+                WHEN 'LIFE_DIRECTION' THEN 'LIFE_DIRECTION'
+                WHEN 'STORY_SOURCE' THEN 'STORY_SOURCE'
+                WHEN 'ORDINARY_CURRENT' THEN CASE
+                    WHEN COALESCE(opening.keyframe_completed, 0) = 1
+                    THEN 'ORDINARY' ELSE 'KEYFRAME' END
+                WHEN 'READY' THEN 'ORDINARY'
+              END
+        )"""
+    )
+    connection.execute("ALTER TABLE background_instances DROP COLUMN enabled")
+    connection.execute("ALTER TABLE background_instances DROP COLUMN disabled_at")
+    connection.execute("ALTER TABLE background_instances DROP COLUMN resumed_at")
+
+
 MIGRATION_STEPS = MappingProxyType(
-    {1: _migrate_v1_to_v2, 2: _migrate_v2_to_v3, 3: _migrate_v3_to_v4}
+    {
+        1: _migrate_v1_to_v2,
+        2: _migrate_v2_to_v3,
+        3: _migrate_v3_to_v4,
+        4: _migrate_v4_to_v5,
+    }
 )
 
 
