@@ -21,6 +21,8 @@ _BOOTSTRAP_READ_ACTIONS = frozenset(
         "player_bootstrap",
         "player_now",
         "player_contacts",
+        "player_history",
+        "player_history_record",
         "player_relationship",
         "player_about",
         "release_notes",
@@ -68,6 +70,12 @@ class PageApiFacade:
 
     async def player_contacts(self) -> Any:
         return await self._handle("player_contacts")
+
+    async def player_history(self) -> Any:
+        return await self._handle("player_history")
+
+    async def player_history_record(self) -> Any:
+        return await self._handle("player_history_record")
 
     async def player_relationship(self) -> Any:
         return await self._handle("player_relationship")

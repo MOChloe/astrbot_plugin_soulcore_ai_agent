@@ -298,6 +298,25 @@ class OutboxRecords:
         params.append(limit)
         return [self._outbox(row) for row in await self.db.fetch_all(sql, params)]
 
+    async def list_instance_player_history_links(
+        self,
+        profile_id: str,
+        instance_id: str,
+        *,
+        limit: int = 10_000,
+    ) -> list[dict[str, Any]]:
+        """Read only the causal delivery links needed by the player history projection."""
+
+        rows = await self.db.fetch_all(
+            """SELECT outbox_id, workflow_id, origin_run_id, context_message_id,
+            status, payload_json, not_before_at, interrupt_policy, created_at
+            FROM instance_outbox
+            WHERE profile_id = ? AND instance_id = ?
+            ORDER BY outbox_id DESC LIMIT ?""",
+            (profile_id, instance_id, max(1, min(int(limit), 10_000))),
+        )
+        return [self._record(row, json_columns=("payload_json",)) for row in rows]
+
     async def list_profile_recent_failed_outbox(
         self,
         profile_id: str,

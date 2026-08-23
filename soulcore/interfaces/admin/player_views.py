@@ -25,6 +25,10 @@ def player_contact_ref(profile_id: str, instance_id: str) -> str:
     return _stable_ref("contact", profile_id, instance_id)
 
 
+def player_history_record_ref(profile_id: str, instance_id: str, anchor: str) -> str:
+    return _stable_ref("record", profile_id, instance_id, anchor)
+
+
 def player_role_view(row: Mapping[str, Any], *, selected: bool) -> dict[str, Any]:
     profile_id = str(row.get("profile_id") or row.get("id") or "")
     display_name = str(row.get("display_name") or row.get("name") or "").strip()
@@ -238,6 +242,7 @@ __all__ = [
     "player_intents_view",
     "player_life_events_view",
     "player_memories_view",
+    "player_history_record_ref",
     "player_people_view",
     "player_portrait_view",
     "player_release_notes_view",

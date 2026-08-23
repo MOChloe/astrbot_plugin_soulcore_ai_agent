@@ -26,6 +26,7 @@ from ..interfaces.admin.controllers.thinking import ThinkingSettingsController
 from ..interfaces.admin.controllers.timeline import TimelineAdminController
 from ..interfaces.admin.controllers.web import WebAdminController
 from ..interfaces.admin.page_controller import AdminPageController
+from ..interfaces.admin.player_history import PlayerHistoryController
 from ..interfaces.astrbot.command_probes import CommandProbeController
 from ..interfaces.astrbot.commands import CommandController
 from ..interfaces.astrbot.foreground import ForegroundCoreController
@@ -443,6 +444,12 @@ def _assemble_page(
         player_profiles=base.player_profiles,
         thinking=base.thinking,
         background=admin.background,
+        player_history=PlayerHistoryController(
+            conversation_repository=repos.conversation,
+            timeline_repository=repos.timeline,
+            delivery_repository=repos.delivery,
+            ai_repository=repos.ai,
+        ),
         character_import=QuickSetupCharacterImportController(
             AstrBotPersonaImportAdapter(foundation.context),
             foundation.ai_manager,

@@ -50,6 +50,7 @@ from .delivery_attention import (
 from .downloads import PageFileDownload
 from .main_config_actions import handle_main_config_action
 from .page_player_actions import PlayerPageActionsMixin
+from .player_history import PlayerHistoryController
 from .player_views import player_role_ref
 from .presentation import jsonable
 from .quick_setup_page import QuickSetupPageMixin
@@ -703,6 +704,7 @@ class AdminPageController(
         identity: Any,
         thinking: ThinkingSettingsController,
         background: Any,
+        player_history: PlayerHistoryController,
         player_profiles: PlayerProfilesAdminController | None = None,
         character_import: Any | None = None,
         role_packages: RolePackageController | None = None,
@@ -729,6 +731,7 @@ class AdminPageController(
         self.player_profiles = player_profiles
         self.thinking = thinking
         self.background = background
+        self.player_history = player_history
         self.character_import = character_import
         self.role_packages = role_packages
         self.identity_confirmations = identity_ui.IdentityConfirmationGrants()
@@ -747,6 +750,8 @@ class AdminPageController(
             "advanced_guide_acknowledge": self._advanced_guide_acknowledge,
             "player_now": self._player_now,
             "player_contacts": self._player_contacts,
+            "player_history": self._player_history,
+            "player_history_record": self._player_history_record,
             "player_relationship": self._player_relationship,
             "player_about": self._player_about,
             "release_notes": self._release_notes,

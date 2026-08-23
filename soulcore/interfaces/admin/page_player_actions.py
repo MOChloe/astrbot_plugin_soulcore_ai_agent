@@ -118,6 +118,77 @@ class PlayerPageActionsMixin:
             },
         }
 
+    async def _player_history(self, payload: dict[str, Any]) -> dict[str, Any]:
+        profile_id = await self._player_profile_id(payload)
+        page = max(1, int(payload.get("page") or 1))
+        page_size = max(1, min(int(payload.get("page_size") or 20), 50))
+        requested_contact_ref = str(payload.get("contact_ref") or "").strip()
+        contacts, public_contacts = await self._player_history_contacts(
+            profile_id, requested_contact_ref
+        )
+        result = await self.player_history.history(
+            profile_id,
+            contacts,
+            page=page,
+            page_size=page_size,
+        )
+        result["contacts"] = public_contacts
+        result["selected_contact_ref"] = requested_contact_ref
+        return result
+
+    async def _player_history_contacts(
+        self, profile_id: str, requested_contact_ref: str
+    ) -> tuple[list[tuple[dict[str, Any], dict[str, Any]]], list[dict[str, Any]]]:
+        snapshot, public_contacts = await asyncio.gather(
+            self.profiles.role_instances_snapshot(profile_id),
+            self._player_contact_list(profile_id),
+        )
+        internal_by_ref = {
+            player_contact_ref(profile_id, str(item.get("instance_id") or "")): dict(item)
+            for item in snapshot.get("instances") or ()
+        }
+        public_by_ref = {str(item.get("contact_ref") or ""): item for item in public_contacts}
+        if requested_contact_ref and requested_contact_ref not in internal_by_ref:
+            raise ValueError("联系人已经变化，请重新选择")
+        selected_refs = (
+            [requested_contact_ref]
+            if requested_contact_ref
+            else [
+                str(item.get("contact_ref") or "")
+                for item in public_contacts
+                if str(item.get("contact_ref") or "") in internal_by_ref
+            ]
+        )
+        contacts = [
+            (internal_by_ref[contact_ref], public_by_ref[contact_ref])
+            for contact_ref in selected_refs
+            if contact_ref in public_by_ref
+        ]
+        return contacts, public_contacts
+
+    async def _player_history_record(self, payload: dict[str, Any]) -> dict[str, Any]:
+        profile_id = await self._player_profile_id(payload)
+        snapshot, public_contacts = await asyncio.gather(
+            self.profiles.role_instances_snapshot(profile_id),
+            self._player_contact_list(profile_id),
+        )
+        public_by_ref = {str(item.get("contact_ref") or ""): item for item in public_contacts}
+        contacts = [
+            (
+                dict(item),
+                public_by_ref.get(
+                    player_contact_ref(profile_id, str(item.get("instance_id") or "")),
+                    player_contact_view(profile_id, item),
+                ),
+            )
+            for item in snapshot.get("instances") or ()
+        ]
+        return await self.player_history.record_from_contacts(
+            profile_id,
+            contacts,
+            str(payload.get("record_ref") or ""),
+        )
+
     async def _player_now(self, payload: dict[str, Any]) -> dict[str, Any]:
         profile_id = await self._player_profile_id(payload)
         contact = await self._player_contact(profile_id, payload, required=False)

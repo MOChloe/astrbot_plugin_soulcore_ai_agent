@@ -41,6 +41,18 @@ PAGE_ROUTES = (
     PageRoute("player_now", "player_now", ("GET",), "Read the character's current life"),
     PageRoute("player_contacts", "player_contacts", ("GET",), "Read player-facing contacts"),
     PageRoute(
+        "player_history",
+        "player_history",
+        ("GET",),
+        "Read player-facing dialogue history",
+    ),
+    PageRoute(
+        "player_history_record",
+        "player_history_record",
+        ("GET",),
+        "Read one player-facing dialogue record",
+    ),
+    PageRoute(
         "player_relationship",
         "player_relationship",
         ("GET",),
