@@ -36,7 +36,17 @@ class WorldSeedRecords:
             "SELECT * FROM world_definitions WHERE profile_id = ?",
             (profile_id,),
         )
-        lore = await self.list_world_lore_entries(profile_id, include_content=False, limit=500)
+        lore_total = await self.count_world_lore_entries(profile_id)
+        lore: list[WorldLoreEntry] = []
+        for offset in range(0, lore_total, 500):
+            lore.extend(
+                await self.list_world_lore_entries(
+                    profile_id,
+                    include_content=False,
+                    limit=500,
+                    offset=offset,
+                )
+            )
         boundaries = await self.list_creative_boundaries(profile_id, enabled_only=True)
         if row is None:
             return WorldDefinition(
@@ -144,6 +154,7 @@ class WorldSeedRecords:
         query: str = "",
         include_content: bool = True,
         limit: int = 100,
+        offset: int = 0,
     ) -> list[WorldLoreEntry]:
         sql = """SELECT lore_id, revision, title, aliases_json, tags_json,
             content, importance FROM world_lore_entries WHERE profile_id = ?"""
@@ -155,8 +166,8 @@ class WorldSeedRecords:
                 " OR tags_json LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')"
             )
             values.extend((pattern, pattern, pattern, pattern))
-        sql += " ORDER BY importance DESC, updated_at DESC, lore_id DESC LIMIT ?"
-        values.append(max(1, min(500, int(limit))))
+        sql += " ORDER BY importance DESC, updated_at DESC, lore_id DESC LIMIT ? OFFSET ?"
+        values.extend((max(1, min(500, int(limit))), max(0, int(offset))))
         rows = await self.db.fetch_all(sql, values)
         return [
             _lore_from_record(
@@ -165,6 +176,19 @@ class WorldSeedRecords:
             )
             for row in rows
         ]
+
+    async def count_world_lore_entries(self, profile_id: str, *, query: str = "") -> int:
+        sql = "SELECT COUNT(*) AS total FROM world_lore_entries WHERE profile_id = ?"
+        values: list[Any] = [profile_id]
+        if str(query or "").strip():
+            pattern = _like(query)
+            sql += (
+                " AND (title LIKE ? ESCAPE '\\' OR aliases_json LIKE ? ESCAPE '\\'"
+                " OR tags_json LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')"
+            )
+            values.extend((pattern, pattern, pattern, pattern))
+        row = await self.db.fetch_one(sql, values)
+        return int(row["total"] if row else 0)
 
     async def get_world_lore_entry(self, profile_id: str, lore_id: int) -> WorldLoreEntry:
         row = await self.db.fetch_one(
@@ -268,14 +292,32 @@ class WorldSeedRecords:
         )
 
     async def list_creative_boundaries(
-        self, profile_id: str, *, enabled_only: bool = False
+        self,
+        profile_id: str,
+        *,
+        enabled_only: bool = False,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[CreativeBoundary]:
         sql = "SELECT * FROM creative_boundaries WHERE profile_id = ?"
         if enabled_only:
             sql += " AND enabled = 1"
         sql += " ORDER BY severity, boundary_id"
-        rows = await self.db.fetch_all(sql, (profile_id,))
+        values: list[Any] = [profile_id]
+        if limit is not None:
+            sql += " LIMIT ? OFFSET ?"
+            values.extend((max(1, min(500, int(limit))), max(0, int(offset))))
+        rows = await self.db.fetch_all(sql, values)
         return [_boundary_from_row(row) for row in rows]
+
+    async def count_creative_boundaries(
+        self, profile_id: str, *, enabled_only: bool = False
+    ) -> int:
+        sql = "SELECT COUNT(*) AS total FROM creative_boundaries WHERE profile_id = ?"
+        if enabled_only:
+            sql += " AND enabled = 1"
+        row = await self.db.fetch_one(sql, (profile_id,))
+        return int(row["total"] if row else 0)
 
     async def get_creative_boundary(self, profile_id: str, boundary_id: int) -> CreativeBoundary:
         row = await self.db.fetch_one(

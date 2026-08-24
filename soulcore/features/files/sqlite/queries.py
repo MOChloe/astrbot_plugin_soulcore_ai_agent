@@ -262,7 +262,12 @@ class FileQueries:
         return await self.uow.run(operation)
 
     async def list_file_artifact_records(
-        self, profile_id: str, instance_id: str, *, limit: int = 100
+        self,
+        profile_id: str,
+        instance_id: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
         rows = await self.db.fetch_all(
             """SELECT j.job_id, j.ai_task_id, j.file_format,
@@ -279,8 +284,13 @@ class FileQueries:
             LEFT JOIN file_assets f ON f.job_id = j.job_id
             LEFT JOIN important_todos x ON x.source_job_id = j.job_id
             WHERE j.profile_id = ? AND j.instance_id = ?
-            ORDER BY j.created_at DESC LIMIT ?""",
-            (profile_id, instance_id, max(1, min(int(limit), 500))),
+            ORDER BY j.created_at DESC LIMIT ? OFFSET ?""",
+            (
+                profile_id,
+                instance_id,
+                max(1, min(int(limit), 500)),
+                max(0, int(offset)),
+            ),
         )
         outbox_rows = await self.db.fetch_all(
             """SELECT outbox_id, payload_json, status, attempts, last_error,
@@ -296,3 +306,23 @@ class FileQueries:
             )
             for row in rows
         ]
+
+    async def file_artifact_statistics(self, profile_id: str, instance_id: str) -> dict[str, int]:
+        row = await self.db.fetch_one(
+            """SELECT
+                COUNT(DISTINCT j.job_id) AS total,
+                COUNT(DISTINCT CASE WHEN f.file_status = 'AVAILABLE' THEN j.job_id END) AS available,
+                COUNT(DISTINCT CASE WHEN x.status IN (
+                    'PENDING', 'SELECTED', 'DELIVERY_PENDING'
+                ) THEN j.job_id END) AS pending_delivery,
+                COUNT(DISTINCT CASE WHEN f.file_status = 'RELEASED' THEN j.job_id END) AS released
+            FROM file_generation_jobs j
+            LEFT JOIN file_assets f ON f.job_id = j.job_id
+            LEFT JOIN important_todos x ON x.source_job_id = j.job_id
+            WHERE j.profile_id = ? AND j.instance_id = ?""",
+            (profile_id, instance_id),
+        )
+        return {
+            key: int(row[key] or 0) if row is not None else 0
+            for key in ("total", "available", "pending_delivery", "released")
+        }

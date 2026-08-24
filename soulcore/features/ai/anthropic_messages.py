@@ -32,6 +32,7 @@ from .agent_transcript import (
     matching_provider_item,
     text_transport_assistant_output,
 )
+from .context_budget import DEFAULT_INTERNAL_OUTPUT_TOKENS, measure_model_request_context
 from .image_requests import payload_images, vision_prompt
 from .image_responses import invalid, vision_description
 from .model_parameters import (
@@ -238,7 +239,7 @@ class AnthropicMessagesAdapter:
             )
         payload: dict[str, Any] = {
             "model": model,
-            "max_tokens": self._max_tokens(request.parameters),
+            "max_tokens": self._max_tokens(request, backend_metadata),
             "messages": messages,
         }
         if system:
@@ -324,16 +325,25 @@ class AnthropicMessagesAdapter:
         return blocks
 
     @staticmethod
-    def _max_tokens(parameters: Mapping[str, Any]) -> int:
-        raw = parameters.get("max_tokens")
+    def _max_tokens(
+        request: AIModelRequest,
+        backend_metadata: Mapping[str, Any] | None,
+    ) -> int:
+        parameters = request.parameters
+        raw = parameters.get(
+            "max_tokens",
+            parameters.get("max_completion_tokens", parameters.get("max_output_tokens")),
+        )
         if raw is None:
-            raise AIInvocationError(
-                AIErrorInfo(
-                    AIErrorCode.INVALID_REQUEST,
-                    "Anthropic 模型必须在模型设置中明确配置 max_tokens",
-                    phase="prepare",
-                )
-            )
+            try:
+                capacity = int((backend_metadata or {}).get("max_context_tokens") or 0)
+            except (TypeError, ValueError):
+                capacity = 0
+            if capacity > 1:
+                requirement = measure_model_request_context(request)
+                used = requirement.input_text_tokens + requirement.input_image_tokens
+                return min(DEFAULT_INTERNAL_OUTPUT_TOKENS, max(1, capacity - used))
+            return DEFAULT_INTERNAL_OUTPUT_TOKENS
         try:
             value = int(raw)
         except (TypeError, ValueError):
@@ -342,7 +352,7 @@ class AnthropicMessagesAdapter:
             raise AIInvocationError(
                 AIErrorInfo(
                     AIErrorCode.INVALID_REQUEST,
-                    "Anthropic 模型的 max_tokens 必须是正整数",
+                    "内部模型请求的输出 Token 上限必须是正整数",
                     phase="prepare",
                 )
             )

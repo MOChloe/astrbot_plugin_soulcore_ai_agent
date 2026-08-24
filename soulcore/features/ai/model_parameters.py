@@ -14,16 +14,18 @@ from collections.abc import Mapping
 from typing import Any
 
 MODEL_GENERATION_PARAMETER_KEYS = (
-    "max_tokens",
-    "max_completion_tokens",
     "reasoning_effort",
     "temperature",
     "top_p",
     "top_k",
 )
-MODEL_OUTPUT_TOKEN_PARAMETER_KEYS = frozenset({"max_tokens", "max_completion_tokens"})
-DEFAULT_MODEL_MAX_CONTEXT_TOKENS = 128_000
-MINIMUM_MODEL_MAX_CONTEXT_TOKENS = 128_000
+_INTERNAL_OUTPUT_TOKEN_PARAMETER_KEYS = frozenset(
+    {"max_tokens", "max_completion_tokens", "max_output_tokens"}
+)
+# A total window must leave room for at least one input token and one output
+# token.  There is deliberately no product-specific 30K/128K floor here:
+# whether a real request fits is decided from that request's measured size.
+MINIMUM_MODEL_MAX_CONTEXT_TOKENS = 2
 TEXT_GENERATION_CAPABILITIES = frozenset(
     {
         "chat.completion",
@@ -48,6 +50,7 @@ _CUSTOM_REQUEST_RESERVED_KEYS = frozenset(
         "system",
         "max_tokens",
         "max_completion_tokens",
+        "max_output_tokens",
         "prompt_cache_key",
         "prompt_cache_options",
     }
@@ -119,8 +122,6 @@ def _positive_token_limit(raw: Any, key: str) -> int:
 
 
 _NORMALIZERS = {
-    "max_tokens": lambda raw: _positive_token_limit(raw, "max_tokens"),
-    "max_completion_tokens": lambda raw: _positive_token_limit(raw, "max_completion_tokens"),
     "reasoning_effort": _reasoning_effort,
     "temperature": _temperature,
     "top_p": _top_p,
@@ -135,7 +136,14 @@ def normalize_model_generation_parameters(value: Any) -> dict[str, Any]:
         return {}
     if not isinstance(value, Mapping):
         raise ValueError("模型生成参数必须是对象")
-    unknown = {str(key) for key in value} - set(MODEL_GENERATION_PARAMETER_KEYS)
+    # Output-token keys were once exposed as model settings.  Ignore stale
+    # persisted copies so they disappear on the next save; output bounds are
+    # now owned only by internal tasks and transports that require one.
+    unknown = (
+        {str(key) for key in value}
+        - set(MODEL_GENERATION_PARAMETER_KEYS)
+        - _INTERNAL_OUTPUT_TOKEN_PARAMETER_KEYS
+    )
     if unknown:
         raise ValueError("不支持的模型生成参数：" + "、".join(sorted(unknown)))
 
@@ -144,8 +152,6 @@ def normalize_model_generation_parameters(value: Any) -> dict[str, Any]:
         for key in MODEL_GENERATION_PARAMETER_KEYS
         if key in value
     }
-    if MODEL_OUTPUT_TOKEN_PARAMETER_KEYS.issubset(normalized):
-        raise ValueError("max_tokens 和 max_completion_tokens 只能配置一个")
     return normalized
 
 
@@ -190,10 +196,10 @@ def _custom_json_key(value: Any) -> str:
 def normalize_model_custom_request_parameters(value: Any) -> dict[str, Any]:
     """Validate model-owned provider fields merged into one JSON request body.
 
-    Structural prompt fields remain owned by SoulCore. Output-token fields have
-    dedicated per-model settings and cannot be duplicated here. The transport
-    is deliberately non-streaming, so an explicit ``stream: false`` is
-    supported for compatibility endpoints while ``true`` is rejected.
+    Structural prompt and output-token fields remain owned by SoulCore and
+    cannot be overridden here. The transport is deliberately non-streaming, so
+    an explicit ``stream: false`` is supported for compatibility endpoints
+    while ``true`` is rejected.
     """
 
     if value is None:
@@ -204,7 +210,7 @@ def normalize_model_custom_request_parameters(value: Any) -> dict[str, Any]:
     forbidden = set(parameters).intersection(_CUSTOM_REQUEST_RESERVED_KEYS)
     if forbidden:
         raise ValueError(
-            "以下请求字段不能放在高级参数中，请使用对应的模型设置：" + "、".join(sorted(forbidden))
+            "以下请求字段由 SoulCore 管理，不能放在高级参数中：" + "、".join(sorted(forbidden))
         )
     if "stream" in parameters and parameters["stream"] is not False:
         raise ValueError("SoulCore 当前只支持非流式响应，stream 只能设置为 false")
@@ -228,10 +234,9 @@ def resolve_model_generation_parameters(
 ) -> dict[str, Any]:
     """Resolve one backend's model-owned generation controls.
 
-    Output-token fields are accepted only from the selected model's persisted
-    configuration. Task code cannot add, lower, raise, or switch either field.
-    Other optional controls keep their existing per-request override behavior,
-    but only when that backend explicitly declares support for them.
+    Output-token fields are never read from model configuration.  They may only
+    come from an internal task that genuinely needs a bounded result; ordinary
+    model calls omit them and let the provider choose its native behavior.
     """
 
     configured = normalize_model_generation_parameters(
@@ -241,21 +246,21 @@ def resolve_model_generation_parameters(
     resolved: dict[str, Any] = {}
     for raw_key, raw in request_parameters.items():
         key = str(raw_key)
-        if key in MODEL_OUTPUT_TOKEN_PARAMETER_KEYS:
+        if key in _INTERNAL_OUTPUT_TOKEN_PARAMETER_KEYS:
+            resolved[key] = _positive_token_limit(raw, key)
             continue
         if key not in managed or key in configured:
             resolved[key] = raw
     for key, raw in configured.items():
-        if key in MODEL_OUTPUT_TOKEN_PARAMETER_KEYS:
-            resolved[key] = raw
-        else:
-            resolved.setdefault(key, raw)
+        resolved.setdefault(key, raw)
+    configured_output_keys = _INTERNAL_OUTPUT_TOKEN_PARAMETER_KEYS.intersection(resolved)
+    if len(configured_output_keys) > 1:
+        raise ValueError("内部模型请求只能使用一个输出 Token 字段")
     return resolved
 
 
 __all__ = [
     "MODEL_GENERATION_PARAMETER_KEYS",
-    "MODEL_OUTPUT_TOKEN_PARAMETER_KEYS",
     "TEXT_GENERATION_CAPABILITIES",
     "normalize_model_custom_request_parameters",
     "normalize_model_generation_parameters",

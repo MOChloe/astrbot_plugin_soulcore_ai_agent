@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from ..model_parameters import (
-    DEFAULT_MODEL_MAX_CONTEXT_TOKENS,
     MINIMUM_MODEL_MAX_CONTEXT_TOKENS,
     TEXT_GENERATION_CAPABILITIES,
     normalize_model_custom_request_parameters,
@@ -39,10 +38,10 @@ _ROUTABLE_CAPABILITIES = (
 
 def _runtime_enabled(row: sqlite3.Row) -> bool:
     capabilities = {str(item) for item in (_load(row["capabilities_json"]) or ())}
-    context_ready = (
-        not capabilities.intersection(TEXT_GENERATION_CAPABILITIES)
-        or _max_context_tokens(_load(row["config_json"]) or {}) >= MINIMUM_MODEL_MAX_CONTEXT_TOKENS
-    )
+    text_model = bool(capabilities.intersection(TEXT_GENERATION_CAPABILITIES))
+    model_config = _load(row["config_json"]) or {}
+    context_capacity = _max_context_tokens(model_config)
+    context_ready = not text_model or context_capacity >= MINIMUM_MODEL_MAX_CONTEXT_TOKENS
     return all(
         (
             bool(row["enabled"]),
@@ -56,15 +55,9 @@ def _runtime_enabled(row: sqlite3.Row) -> bool:
 
 def _max_context_tokens(config: dict[str, Any]) -> int:
     try:
-        return max(
-            1,
-            min(
-                10_000_000,
-                int(config.get("max_context_tokens") or DEFAULT_MODEL_MAX_CONTEXT_TOKENS),
-            ),
-        )
+        return max(0, min(10_000_000, int(config.get("max_context_tokens") or 0)))
     except (TypeError, ValueError):
-        return DEFAULT_MODEL_MAX_CONTEXT_TOKENS
+        return 0
 
 
 def _runtime_metadata(

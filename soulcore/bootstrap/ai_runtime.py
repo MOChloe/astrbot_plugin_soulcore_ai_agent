@@ -30,7 +30,6 @@ from ..features.ai.image_capabilities import (
     OpenAIVisionDescribeAdapter,
 )
 from ..features.ai.model_parameters import (
-    DEFAULT_MODEL_MAX_CONTEXT_TOKENS,
     MINIMUM_MODEL_MAX_CONTEXT_TOKENS,
     TEXT_GENERATION_CAPABILITIES,
     normalize_model_custom_request_parameters,
@@ -519,19 +518,10 @@ class AIRuntimeLoader:
             **dict(model.get("config") or {}),
         }
         model_config = dict(model.get("config") or {})
-        try:
-            max_context_tokens = max(
-                1,
-                min(
-                    10_000_000,
-                    int(
-                        effective_config.get("max_context_tokens")
-                        or DEFAULT_MODEL_MAX_CONTEXT_TOKENS
-                    ),
-                ),
-            )
-        except (TypeError, ValueError):
-            max_context_tokens = DEFAULT_MODEL_MAX_CONTEXT_TOKENS
+        generation_parameters = normalize_model_generation_parameters(
+            model_config.get("generation_parameters")
+        )
+        max_context_tokens = AIRuntimeLoader._runtime_context_capacity(effective_config)
         return {
             "package_id": str(package.get("package_id") or ""),
             "backend_id": str(model.get("backend_id") or ""),
@@ -541,9 +531,7 @@ class AIRuntimeLoader:
             "profile_id": str(package.get("profile_id") or "default"),
             "max_context_tokens": max_context_tokens,
             "supports_vision": AIRuntimeLoader._supports_vision(effective_config),
-            "generation_parameters": normalize_model_generation_parameters(
-                model_config.get("generation_parameters")
-            ),
+            "generation_parameters": generation_parameters,
             "custom_request_parameters": normalize_model_custom_request_parameters(
                 model_config.get("custom_request_parameters")
             ),
@@ -596,16 +584,22 @@ class AIRuntimeLoader:
         return capabilities
 
     @staticmethod
+    def _runtime_context_capacity(config: Mapping[str, Any]) -> int:
+        try:
+            return max(0, min(10_000_000, int(config.get("max_context_tokens") or 0)))
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
     def _model_enabled(
         model: Mapping[str, Any],
         package: Mapping[str, Any],
         metadata: Mapping[str, Any],
     ) -> bool:
         capabilities = {str(item) for item in model.get("capabilities") or ()}
-        context_ready = (
-            not capabilities.intersection(TEXT_GENERATION_CAPABILITIES)
-            or int(metadata.get("max_context_tokens") or 0) >= MINIMUM_MODEL_MAX_CONTEXT_TOKENS
-        )
+        text_model = bool(capabilities.intersection(TEXT_GENERATION_CAPABILITIES))
+        context_capacity = int(metadata.get("max_context_tokens") or 0)
+        context_ready = not text_model or context_capacity >= MINIMUM_MODEL_MAX_CONTEXT_TOKENS
         return (
             bool(package.get("enabled", True))
             and not package.get("archived_at")

@@ -249,14 +249,23 @@ class StickerRuntimeAdminMixin:
     async def _sticker_task_page(
         self, profile_id: str, instance_id: str, view: str, page: int, size: int
     ) -> dict[str, Any]:
-        tasks = await self.ai_repository.list_ai_tasks(
-            profile_id=profile_id, instance_id=instance_id, limit=1000
+        total = await self.ai_repository.count_ai_tasks(
+            profile_id=profile_id,
+            instance_id=instance_id,
+            task_type_prefix="STICKER_",
+            has_error=view == "errors",
         )
-        rows = [
-            ai_task_view(task)
-            for task in tasks
-            if str(task.get("task_type") or "").startswith("STICKER_")
-        ]
+        page_count = max(1, (total + size - 1) // size)
+        page = max(1, min(int(page), page_count))
+        tasks = await self.ai_repository.list_ai_tasks(
+            profile_id=profile_id,
+            instance_id=instance_id,
+            task_type_prefix="STICKER_",
+            has_error=view == "errors",
+            limit=size,
+            offset=(page - 1) * size,
+        )
+        rows = [ai_task_view(task) for task in tasks]
         rows.sort(key=lambda row: int(row.get("task_id") or 0), reverse=True)
         if view == "errors":
             rows = [
@@ -267,15 +276,13 @@ class StickerRuntimeAdminMixin:
                     "updated_at": row.get("updated_at"),
                 }
                 for row in rows
-                if row.get("last_error")
             ]
-        total, offset = len(rows), (page - 1) * size
         return {
-            "items": rows[offset : offset + size],
+            "items": rows,
             "total": total,
             "page": page,
             "page_size": size,
-            "page_count": max(1, (total + size - 1) // size),
+            "page_count": page_count,
         }
 
     async def _active_sticker_task(self, state: Mapping[str, Any]) -> Any | None:

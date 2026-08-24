@@ -331,6 +331,59 @@ class ProfilesAdminController:
             "instances": [*private, *groups],
         }
 
+    async def role_instances_page(
+        self,
+        profile_id: str,
+        scope: str,
+        *,
+        page: int = 1,
+        page_size: int = 30,
+        instance_id: str = "",
+    ) -> dict[str, Any]:
+        if scope not in {"private", "group"}:
+            raise ValueError("scope must be 'private' or 'group'")
+        size = max(5, min(int(page_size), 50))
+        total = await self.profiles_repository.count_character_instances(profile_id, scope)
+        page_count = max(1, (total + size - 1) // size)
+        if str(instance_id).strip():
+            located_page = await self.profiles_repository.character_instance_page(
+                profile_id,
+                scope,
+                str(instance_id).strip(),
+                page_size=size,
+            )
+            if located_page is not None:
+                page = located_page
+        page = max(1, min(int(page), page_count))
+        raw_items = await self.profiles_repository.list_character_instances(
+            profile_id,
+            scope,
+            limit=size,
+            offset=(page - 1) * size,
+        )
+        serialized = self._serialized_instances(raw_items)
+        live_names = await live_instance_display_names(
+            self.context,
+            [self._directory_entry(value) for value in serialized],
+        )
+        items = [
+            item
+            for value in serialized
+            if (item := self._instance_item(value, profile_id, live_names)) is not None
+        ]
+        return {
+            "profile_id": profile_id,
+            "scope": scope,
+            "instances": items,
+            "pagination": {
+                "page": page,
+                "page_size": size,
+                "page_count": page_count,
+                "total": total,
+                "has_more": page < page_count,
+            },
+        }
+
     @staticmethod
     def _serialized_instances(raw_items: list[Any]) -> list[dict[str, Any]]:
         result = []

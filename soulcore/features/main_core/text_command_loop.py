@@ -38,6 +38,7 @@ from ..ai.service import (
     ModelContextRequirement,
     available_prompt_tokens,
     configured_model_context_tokens,
+    configured_model_generation_parameters,
     register_result_references,
 )
 from ..character_model import StoryStylePrompts
@@ -1088,7 +1089,6 @@ class MainCoreTextCommandLoop(
         *,
         input_image_count: int = 0,
     ) -> int:
-        del route
         prepared = contexts.prepared_context
         limit = int(prepared.effective_max_tokens) if prepared is not None else 0
         if limit < 1:
@@ -1096,9 +1096,13 @@ class MainCoreTextCommandLoop(
                 limit = int(role.max_context_tokens)
             except (TypeError, ValueError):
                 limit = 128000
+        model_limit = configured_model_context_tokens(route.backend_hint)
+        if model_limit is not None:
+            limit = min(limit, model_limit)
         return available_prompt_tokens(
             limit,
             input_image_count=input_image_count,
+            parameters=configured_model_generation_parameters(route.backend_hint),
         )
 
     async def _compile_routed_round(
@@ -1143,6 +1147,7 @@ class MainCoreTextCommandLoop(
                 history=active_history,
                 base_prompt_tokens=prompt.total_tokens,
                 input_image_count=len(prompt.image_urls),
+                generation_parameters=configured_model_generation_parameters(current),
                 context_limit=current_limit,
                 model_id=self._model_id(route),
                 backend_id=str(current.backend_id if current is not None else ""),

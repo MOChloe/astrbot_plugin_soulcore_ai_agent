@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-from ..model_parameters import (
-    DEFAULT_MODEL_MAX_CONTEXT_TOKENS,
-    MINIMUM_MODEL_MAX_CONTEXT_TOKENS,
-    TEXT_GENERATION_CAPABILITIES,
-)
+from ..model_parameters import MINIMUM_MODEL_MAX_CONTEXT_TOKENS, TEXT_GENERATION_CAPABILITIES
 from .support import (
     Any,
     _dt,
@@ -470,19 +466,23 @@ class AiConfigurationRecords:
             else {}
         )
         if set(capabilities).intersection(TEXT_GENERATION_CAPABILITIES):
-            raw_context = effective_config.get(
-                "max_context_tokens", DEFAULT_MODEL_MAX_CONTEXT_TOKENS
-            )
-            try:
-                max_context_tokens = int(raw_context)
-            except (TypeError, ValueError) as exc:
-                raise ValueError("model max_context_tokens must be an integer") from exc
-            if (
-                isinstance(raw_context, bool)
-                or max_context_tokens < MINIMUM_MODEL_MAX_CONTEXT_TOKENS
-            ):
-                raise ValueError("text and vision models require at least 128000 context tokens")
-            effective_config["max_context_tokens"] = min(max_context_tokens, 10_000_000)
+            raw_context = effective_config.get("max_context_tokens")
+            if raw_context in (None, ""):
+                effective_config.pop("max_context_tokens", None)
+            else:
+                try:
+                    max_context_tokens = int(raw_context)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("model max_context_tokens must be an integer") from exc
+                if (
+                    isinstance(raw_context, bool)
+                    or max_context_tokens < MINIMUM_MODEL_MAX_CONTEXT_TOKENS
+                ):
+                    raise ValueError(
+                        "text and vision models require at least "
+                        f"{MINIMUM_MODEL_MAX_CONTEXT_TOKENS} context tokens"
+                    )
+                effective_config["max_context_tokens"] = min(max_context_tokens, 10_000_000)
         if existing is None:
             self._insert_ai_api_model(
                 conn,

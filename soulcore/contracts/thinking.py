@@ -136,9 +136,6 @@ def thinking_policy_options() -> list[dict[str, Any]]:
         {
             "complexity": policy.complexity.value,
             "hard_max_steps": policy.hard_max_steps,
-            "max_context_tokens": policy.max_context_tokens,
-            "target_context_tokens": policy.target_context_tokens,
-            "fill_ratio": policy.fill_ratio,
             "preload_tokens": policy.preload_tokens,
         }
         for policy in _POLICIES.values()

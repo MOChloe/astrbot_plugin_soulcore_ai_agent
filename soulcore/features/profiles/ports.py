@@ -63,7 +63,37 @@ class InstanceChatPolicyRepositoryPort(Protocol):
     ) -> InstanceChatPolicy | None: ...
 
 
-class ProfilesRepositoryPort(InstanceChatPolicyRepositoryPort, Protocol):
+class CharacterInstanceQueryRepositoryPort(Protocol):
+    async def list_character_instances(
+        self,
+        profile_id: str,
+        scope: str | None = None,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[CharacterInstance]: ...
+
+    async def count_character_instances(
+        self,
+        profile_id: str,
+        scope: str | None = None,
+    ) -> int: ...
+
+    async def character_instance_page(
+        self,
+        profile_id: str,
+        scope: str,
+        instance_id: str,
+        *,
+        page_size: int,
+    ) -> int | None: ...
+
+
+class ProfilesRepositoryPort(
+    InstanceChatPolicyRepositoryPort,
+    CharacterInstanceQueryRepositoryPort,
+    Protocol,
+):
     async def ensure_character_instance(
         self,
         profile_id: str,
@@ -189,12 +219,6 @@ class ProfilesRepositoryPort(InstanceChatPolicyRepositoryPort, Protocol):
         profile_id: str,
         instance_id: str,
     ) -> CharacterInstance | None: ...
-
-    async def list_character_instances(
-        self,
-        profile_id: str,
-        scope: str | None = None,
-    ) -> list[CharacterInstance]: ...
 
     async def upsert_participant_identity(
         self, profile_id: str, instance_id: str, **values: object

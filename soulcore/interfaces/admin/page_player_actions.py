@@ -38,17 +38,6 @@ _ADVANCED_GUIDE_VERSION = 1
 _ADVANCED_GUIDE_PREFERENCE_KEY = "advanced.guide.seen_version"
 
 
-def _delivery_failures_by_instance(value: object) -> dict[str, list[Mapping[str, Any]]]:
-    grouped: dict[str, list[Mapping[str, Any]]] = {}
-    for item in jsonable(value) or []:
-        if not isinstance(item, Mapping):
-            continue
-        instance_id = str(item.get("instance_id") or "")
-        if instance_id:
-            grouped.setdefault(instance_id, []).append(item)
-    return grouped
-
-
 def _delivery_acknowledgements_by_instance(
     preference_keys: Mapping[str, str],
     preference_values: Mapping[str, str],
@@ -58,6 +47,47 @@ def _delivery_acknowledgements_by_instance(
             parse_delivery_failure_acknowledgements(preference_values.get(preference_key, ""))
         )
         for instance_id, preference_key in preference_keys.items()
+    }
+
+
+def _relationship_portrait_payload(payload: Mapping[str, Any], person_ref: str) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "page_size": 20,
+        "person_ref": person_ref,
+        "entry_page": 1,
+        "entry_page_size": 20,
+    }
+    if "people_page" in payload:
+        result["page"] = max(1, int(payload.get("people_page") or 1))
+    return result
+
+
+def _relationship_contact_projection(
+    contact: Mapping[str, Any],
+    scope: str,
+    portrait: Mapping[str, Any],
+) -> dict[str, Any]:
+    projection = dict(contact)
+    if scope == "group":
+        return projection
+    observed_name = str(portrait.get("selected_display_name") or "").strip()
+    if observed_name:
+        projection["display_name"] = observed_name
+    return projection
+
+
+def _relationship_contact_preferences(policies: Mapping[str, Any]) -> dict[str, Any]:
+    effective = dict(policies.get("effective") or {})
+    chat_policy = dict(policies.get("chat_policy") or {})
+    return {
+        "can_reply": bool(chat_policy.get("soulcore_enabled", True)),
+        "can_send_images": bool(chat_policy.get("image_send_enabled", True)),
+        "proactive_enabled": bool(effective.get("proactive_enabled", True)),
+        "quiet_enabled": bool(effective.get("quiet_enabled", True)),
+        "quiet_start": str(effective.get("quiet_start") or "23:00"),
+        "quiet_end": str(effective.get("quiet_end") or "08:00"),
+        "daily_limit_mode": str(effective.get("daily_limit_mode") or "LIMITED"),
+        "daily_limit": effective.get("daily_success_limit"),
     }
 
 
@@ -122,6 +152,7 @@ class PlayerPageActionsMixin:
         profile_id = await self._player_profile_id(payload)
         page = max(1, int(payload.get("page") or 1))
         page_size = max(1, min(int(payload.get("page_size") or 20), 50))
+        contact_page_size = max(5, min(int(payload.get("contact_page_size") or 20), 50))
         requested_contact_ref = str(payload.get("contact_ref") or "").strip()
         contacts, public_contacts = await self._player_history_contacts(
             profile_id, requested_contact_ref
@@ -132,7 +163,31 @@ class PlayerPageActionsMixin:
             page=page,
             page_size=page_size,
         )
-        result["contacts"] = public_contacts
+        if requested_contact_ref and "contact_page" not in payload:
+            selected_index = next(
+                (
+                    index
+                    for index, item in enumerate(public_contacts)
+                    if str(item.get("contact_ref") or "") == requested_contact_ref
+                ),
+                0,
+            )
+            contact_page = selected_index // contact_page_size + 1
+        else:
+            contact_page = max(1, int(payload.get("contact_page") or 1))
+        contact_page_count = max(
+            1, (len(public_contacts) + contact_page_size - 1) // contact_page_size
+        )
+        contact_page = min(contact_page, contact_page_count)
+        contact_start = (contact_page - 1) * contact_page_size
+        result["contacts"] = public_contacts[contact_start : contact_start + contact_page_size]
+        result["contact_pagination"] = {
+            "page": contact_page,
+            "page_size": contact_page_size,
+            "page_count": contact_page_count,
+            "total": len(public_contacts),
+            "has_more": contact_page < contact_page_count,
+        }
         result["selected_contact_ref"] = requested_contact_ref
         return result
 
@@ -199,15 +254,21 @@ class PlayerPageActionsMixin:
                 "events": [],
                 "plans": [],
                 "arrangements": [],
+                "arrangement_pagination": _page_view(1, 10, 0),
                 "problems": [],
             }
         instance_id = str(contact["instance_id"])
         background, detail, arrangements = await asyncio.gather(
             self.background.workspace(profile_id, instance_id),
             self._instance_detail(profile_id, instance_id, {"message_page_size": 5}),
-            self._player_arrangements(profile_id, instance_id),
+            self._player_arrangements(
+                profile_id,
+                instance_id,
+                page=max(1, int(payload.get("arrangement_page") or 1)),
+                page_size=max(5, min(int(payload.get("arrangement_page_size") or 10), 20)),
+            ),
         )
-        problems = await self._player_instance_problems(profile_id, instance_id, detail)
+        problems = await self._player_instance_problems(profile_id, instance_id)
         if int(background.get("problem_count") or 0):
             problems.append(
                 {
@@ -222,7 +283,8 @@ class PlayerPageActionsMixin:
             "current": player_current_life_view(background.get("current_role") or {}),
             "events": player_life_events_view(background.get("timeline")),
             "plans": player_intents_view(detail.get("character_intents")),
-            "arrangements": arrangements,
+            "arrangements": arrangements["items"],
+            "arrangement_pagination": arrangements["pagination"],
             "problems": problems,
         }
 
@@ -239,21 +301,20 @@ class PlayerPageActionsMixin:
                 profile_id,
                 instance_id,
                 scope,
-                {"page": 1, "page_size": 50, "person_ref": person_ref},
+                _relationship_portrait_payload(payload, person_ref),
             ),
             self.knowledge.knowledge_snapshot(profile_id, instance_id),
             self.profile_settings.instance_contact_override_snapshot(profile_id, instance_id),
             self._instance_detail(profile_id, instance_id, {"message_page_size": 5}),
-            self._player_arrangements(profile_id, instance_id),
+            self._player_arrangements(
+                profile_id,
+                instance_id,
+                page=max(1, int(payload.get("arrangement_page") or 1)),
+                page_size=max(5, min(int(payload.get("arrangement_page_size") or 10), 20)),
+            ),
         )
-        effective = dict(policies.get("effective") or {})
-        chat_policy = dict(policies.get("chat_policy") or {})
-        problems = await self._player_instance_problems(profile_id, instance_id, detail)
-        contact_projection = dict(contact)
-        if scope != "group":
-            observed_name = str(portrait.get("selected_display_name") or "").strip()
-            if observed_name:
-                contact_projection["display_name"] = observed_name
+        problems = await self._player_instance_problems(profile_id, instance_id)
+        contact_projection = _relationship_contact_projection(contact, scope, portrait)
         return {
             "contact": player_contact_view(
                 profile_id,
@@ -262,28 +323,29 @@ class PlayerPageActionsMixin:
                 problem_count=len(problems),
             ),
             "people": player_people_view(portrait.get("people")),
+            "people_pagination": dict(portrait.get("pagination") or _page_view(1, 20, 0)),
             "selected_person_ref": str(portrait.get("selected_person_ref") or ""),
             "selected_display_name": str(portrait.get("selected_display_name") or ""),
             "portrait": player_portrait_view(portrait.get("entries")),
             "memories": player_memories_view(knowledge.get("memories")),
-            "arrangements": arrangements,
-            "contact_preferences": {
-                "can_reply": bool(chat_policy.get("soulcore_enabled", True)),
-                "can_send_images": bool(chat_policy.get("image_send_enabled", True)),
-                "proactive_enabled": bool(effective.get("proactive_enabled", True)),
-                "quiet_enabled": bool(effective.get("quiet_enabled", True)),
-                "quiet_start": str(effective.get("quiet_start") or "23:00"),
-                "quiet_end": str(effective.get("quiet_end") or "08:00"),
-                "daily_limit_mode": str(effective.get("daily_limit_mode") or "LIMITED"),
-                "daily_limit": effective.get("daily_success_limit"),
-            },
+            "arrangements": arrangements["items"],
+            "arrangement_pagination": arrangements["pagination"],
+            "contact_preferences": _relationship_contact_preferences(policies),
             "problems": problems,
         }
 
     async def _player_about(self, payload: dict[str, Any]) -> dict[str, Any]:
         profile_id = await self._player_profile_id(payload)
         character, world = await asyncio.gather(
-            self.character_models.snapshot(profile_id), self.background.world_snapshot(profile_id)
+            self.character_models.snapshot(profile_id),
+            self.background.world_snapshot(
+                profile_id,
+                lore_page=1,
+                lore_page_size=1,
+                boundary_page=max(1, int(payload.get("boundary_page") or 1)),
+                boundary_page_size=max(1, min(int(payload.get("boundary_page_size") or 10), 50)),
+                boundary_enabled_only=True,
+            ),
         )
         return {
             "character": player_character_view(character),
@@ -385,10 +447,6 @@ class PlayerPageActionsMixin:
         activity = await self.timeline.conversation_repository.list_instance_message_activity(
             profile_id, instance_ids
         )
-        recent_failures = await self.timeline.delivery_repository.list_profile_recent_failed_outbox(
-            profile_id,
-            limit_per_instance=20,
-        )
         chat_policies = await asyncio.gather(
             *(
                 self.profiles_repository.get_instance_chat_policy(profile_id, instance_id)
@@ -396,10 +454,9 @@ class PlayerPageActionsMixin:
             )
         )
         chat_policy_by_instance = {str(policy.instance_id): policy for policy in chat_policies}
-        failures_by_instance = _delivery_failures_by_instance(recent_failures)
         preference_keys = {
             instance_id: delivery_failure_preference_key(profile_id, instance_id)
-            for instance_id in failures_by_instance
+            for instance_id in instance_ids
         }
         preference_values = await self.profiles_repository.get_console_preferences(
             tuple(preference_keys.values())
@@ -408,14 +465,24 @@ class PlayerPageActionsMixin:
             preference_keys,
             preference_values,
         )
+        problem_counts = await asyncio.gather(
+            *(
+                self.timeline.delivery_problem_count(
+                    profile_id,
+                    instance_id,
+                    tuple(acknowledged_by_instance.get(instance_id, ())),
+                )
+                for instance_id in instance_ids
+            )
+        )
+        problem_count_by_instance = dict(zip(instance_ids, problem_counts, strict=True))
         rows = [
             self._player_contact_summary(
                 profile_id,
                 item,
                 activity.get(str(item.get("instance_id") or ""), {}),
                 chat_policy_by_instance.get(str(item.get("instance_id") or "")),
-                failures_by_instance.get(str(item.get("instance_id") or ""), []),
-                acknowledged_by_instance.get(str(item.get("instance_id") or ""), frozenset()),
+                problem_count_by_instance.get(str(item.get("instance_id") or ""), 0),
             )
             for item in instances
         ]
@@ -435,8 +502,7 @@ class PlayerPageActionsMixin:
         instance: Mapping[str, Any],
         activity: Mapping[str, Any],
         chat_policy: Any,
-        recent_failures: list[Mapping[str, Any]],
-        acknowledged: frozenset[str],
+        delivery_problem_count: int,
     ) -> dict[str, Any]:
         projected_instance = dict(instance)
         if str(instance.get("scope") or "").lower() != "group":
@@ -452,37 +518,37 @@ class PlayerPageActionsMixin:
                 observed_name = str(activity.get("latest_sender_name") or "").strip()
                 if observed_name:
                     projected_instance["display_name"] = observed_name
-        failures = sum(
-            bool(_outbox_view(item, acknowledged_failures=acknowledged)["requires_attention"])
-            for item in recent_failures
-        )
         return player_contact_view(
             profile_id,
             projected_instance,
             latest_at=activity.get("latest_at"),
-            problem_count=failures,
+            problem_count=max(0, int(delivery_problem_count)),
         )
 
     async def _player_instance_problems(
-        self, profile_id: str, instance_id: str, detail: Mapping[str, Any]
+        self, profile_id: str, instance_id: str
     ) -> list[dict[str, Any]]:
         acknowledged = await self._player_acknowledged(profile_id, instance_id)
-        problems = []
-        for item in detail.get("outbox") or []:
-            view = _outbox_view(item, acknowledged_failures=acknowledged)
-            if not view["requires_attention"]:
-                continue
-            problems.append(
-                {
-                    "code": "qq_delivery_failed",
-                    "title": "有一条回复没有送到 QQ",
-                    "summary": view["last_error"] or "回复已经保留，可以在高级设置中查看。",
-                    "occurred_at": view["not_before_at"],
-                    "occurrence_id": view["occurrence_id"],
-                    "action": "developer-contact",
-                }
-            )
-        return problems
+        summary = await self.timeline.delivery_attention_summary(
+            profile_id,
+            instance_id,
+            acknowledged,
+        )
+        count = int(summary.get("count") or 0)
+        latest = summary.get("latest")
+        if count <= 0 or not isinstance(latest, Mapping):
+            return []
+        view = _outbox_view(latest, acknowledged_failures=acknowledged)
+        return [
+            {
+                "code": "qq_delivery_failed",
+                "title": f"有 {count} 条回复没有送到 QQ" if count > 1 else "有一条回复没有送到 QQ",
+                "summary": view["last_error"] or "回复已经保留，可以在高级设置中查看。",
+                "occurred_at": view["not_before_at"],
+                "occurrence_id": view["occurrence_id"],
+                "action": "developer-contact",
+            }
+        ]
 
     async def _player_acknowledged(self, profile_id: str, instance_id: str) -> frozenset[str]:
         return parse_delivery_failure_acknowledgements(
@@ -491,14 +557,32 @@ class PlayerPageActionsMixin:
             )
         )
 
-    async def _player_arrangements(self, profile_id: str, instance_id: str) -> list[dict[str, Any]]:
+    async def _player_arrangements(
+        self,
+        profile_id: str,
+        instance_id: str,
+        *,
+        page: int,
+        page_size: int,
+    ) -> dict[str, Any]:
         if self.timer_repository is None:
-            return []
+            return {"items": [], "pagination": _page_view(1, page_size, 0)}
         scope = TimerScope(profile_id, instance_id)
-        page = await self.timer_repository.list_rules(scope, limit=20)
+        rules = []
+        cursor = 0
+        while True:
+            batch = await self.timer_repository.list_rules(
+                scope,
+                limit=64,
+                after_created_sequence=cursor,
+            )
+            rules.extend(batch.items)
+            if batch.next_created_sequence is None:
+                break
+            cursor = int(batch.next_created_sequence)
         now = datetime.now(UTC)
         result = []
-        for rule in page.items:
+        for rule in rules:
             if str(rule.status.value) != "ACTIVE":
                 continue
             due = next_occurrence(rule.schedule, after=now)
@@ -510,7 +594,14 @@ class PlayerPageActionsMixin:
                     "due_at": due.isoformat() if due is not None else None,
                 }
             )
-        return result
+        size = max(5, min(int(page_size), 20))
+        page_count = max(1, (len(result) + size - 1) // size)
+        page = max(1, min(int(page), page_count))
+        start = (page - 1) * size
+        return {
+            "items": result[start : start + size],
+            "pagination": _page_view(page, size, len(result)),
+        }
 
     @staticmethod
     def _player_readiness(value: Any) -> dict[str, Any]:
@@ -545,6 +636,20 @@ class PlayerPageActionsMixin:
         from ...version import VERSION
 
         return f"v{VERSION}"
+
+
+def _page_view(page: int, page_size: int, total: int) -> dict[str, int | bool]:
+    size = max(1, int(page_size))
+    count = max(0, int(total))
+    page_count = max(1, (count + size - 1) // size)
+    bounded_page = max(1, min(int(page), page_count))
+    return {
+        "page": bounded_page,
+        "page_size": size,
+        "page_count": page_count,
+        "total": count,
+        "has_more": bounded_page < page_count,
+    }
 
 
 __all__ = ["PlayerPageActionsMixin"]

@@ -113,6 +113,7 @@ class KnowledgeQueries:
         *,
         status: str | None = None,
         limit: int = 1000,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
         clauses = ["m.profile_id = ?", "m.instance_id = ?"]
         params: list[Any] = [profile_id, instance_id]
@@ -122,7 +123,7 @@ class KnowledgeQueries:
                 raise ValueError("unsupported memory status")
             clauses.append("m.status = ?")
             params.append(normalized_status)
-        params.append(max(1, min(int(limit), 5000)))
+        params.extend((max(1, min(int(limit), 5000)), max(0, int(offset))))
         rows = await self.db.fetch_all(
             """SELECT m.*, r.memory_revision_id, r.brief, r.ultra_brief,
                 r.importance, r.event_time, r.origin, r.change_reason,
@@ -131,10 +132,31 @@ class KnowledgeQueries:
               ON r.memory_id = m.memory_id AND r.revision = m.current_revision
             WHERE """
             + " AND ".join(clauses)
-            + " ORDER BY r.importance DESC, m.memory_id DESC LIMIT ?",
+            + " ORDER BY r.importance DESC, m.memory_id DESC LIMIT ? OFFSET ?",
             params,
         )
         return [await self._memory_record(row) for row in rows]
+
+    async def count_memories(
+        self,
+        profile_id: str,
+        instance_id: str,
+        *,
+        status: str | None = None,
+    ) -> int:
+        clauses = ["profile_id = ?", "instance_id = ?"]
+        params: list[Any] = [profile_id, instance_id]
+        if status is not None:
+            normalized_status = str(status).upper()
+            if normalized_status not in {"ACTIVE", "DISABLED", "RETRACTED"}:
+                raise ValueError("unsupported memory status")
+            clauses.append("status = ?")
+            params.append(normalized_status)
+        row = await self.db.fetch_one(
+            "SELECT COUNT(*) AS total FROM memories WHERE " + " AND ".join(clauses),
+            params,
+        )
+        return int(row["total"] if row else 0)
 
     async def search_memories(
         self, profile_id: str, instance_id: str, query: str, *, limit: int = 5
@@ -195,6 +217,7 @@ class KnowledgeQueries:
         *,
         status: str | None = None,
         limit: int = 1000,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
         clauses = ["e.profile_id = ?", "e.instance_id = ?"]
         params: list[Any] = [profile_id, instance_id]
@@ -204,7 +227,7 @@ class KnowledgeQueries:
                 raise ValueError("unsupported KnowledgeFact status")
             clauses.append("e.status = ?")
             params.append(normalized_status)
-        params.append(max(1, min(int(limit), 5000)))
+        params.extend((max(1, min(int(limit), 5000)), max(0, int(offset))))
         rows = await self.db.fetch_all(
             """SELECT e.*, r.knowledge_fact_revision_id, r.name, r.aliases_json,
                 r.definition, r.brief, r.importance, r.category,
@@ -216,10 +239,31 @@ class KnowledgeQueries:
              AND r.revision = e.current_revision
             WHERE """
             + " AND ".join(clauses)
-            + " ORDER BY r.importance DESC, e.knowledge_fact_id DESC LIMIT ?",
+            + " ORDER BY r.importance DESC, e.knowledge_fact_id DESC LIMIT ? OFFSET ?",
             params,
         )
         return [await self._knowledge_fact_record(row) for row in rows]
+
+    async def count_knowledge_facts(
+        self,
+        profile_id: str,
+        instance_id: str,
+        *,
+        status: str | None = None,
+    ) -> int:
+        clauses = ["profile_id = ?", "instance_id = ?"]
+        params: list[Any] = [profile_id, instance_id]
+        if status is not None:
+            normalized_status = str(status).upper()
+            if normalized_status not in {"ACTIVE", "DISABLED", "RETRACTED"}:
+                raise ValueError("unsupported KnowledgeFact status")
+            clauses.append("status = ?")
+            params.append(normalized_status)
+        row = await self.db.fetch_one(
+            "SELECT COUNT(*) AS total FROM knowledge_fact_entries WHERE " + " AND ".join(clauses),
+            params,
+        )
+        return int(row["total"] if row else 0)
 
     async def search_knowledge_facts(
         self, profile_id: str, instance_id: str, query: str, *, limit: int = 5

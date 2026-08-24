@@ -12,7 +12,7 @@ from typing import Any
 from ...contracts.ai_models import AIWorkPurpose
 from ...shared.prompt_document import TrustedPromptMarkup, project_prompt_text
 from ..ai import record_structured_rejection
-from ..ai.service import DEFAULT_RESERVED_OUTPUT_TOKENS
+from ..ai.service import DEFAULT_INTERNAL_OUTPUT_TOKENS
 from ..identity import (
     IdentityCatalog,
     IdentityRenderContext,
@@ -306,7 +306,7 @@ async def _prepare_session(
         task_definition=definition,
         task_input=task_input,
         output_contract=contract,
-        output_reserve_tokens=DEFAULT_RESERVED_OUTPUT_TOKENS,
+        output_reserve_tokens=DEFAULT_INTERNAL_OUTPUT_TOKENS,
         preferred_backend_id=preferred_backend_id,
         finalize_task_input=lambda value: finalize_identity_directory(value, identity_catalog),
     )
@@ -368,7 +368,7 @@ async def _round_prompt(
         task_definition=definition,
         task_input=task_input,
         output_contract=contract,
-        output_reserve_tokens=DEFAULT_RESERVED_OUTPUT_TOKENS,
+        output_reserve_tokens=DEFAULT_INTERNAL_OUTPUT_TOKENS,
         preferred_backend_id=prepared.preferred_backend_id,
         finalize_task_input=lambda value: finalize_identity_directory(
             value,

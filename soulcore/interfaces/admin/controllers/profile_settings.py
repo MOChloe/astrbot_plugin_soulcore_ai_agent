@@ -337,20 +337,11 @@ class ProfileSettingsController(InstanceOverrideActionsMixin):
         low_maximum = int(payload.get("low_frequency_max_wakeup_minutes", 480))
         self._validate_interval(low_minimum, low_maximum, "low-frequency wake interval")
         selected_policy = thinking_policy or thinking_policy_from_value(None)
-        max_context_tokens = int(
-            payload.get("max_context_tokens", selected_policy.max_context_tokens)
-        )
-        target_context_tokens = int(
-            payload.get("target_context_tokens", selected_policy.target_context_tokens)
-        )
+        max_context_tokens = selected_policy.max_context_tokens
+        target_context_tokens = selected_policy.target_context_tokens
         media_original_retention_days = int(payload.get("media_original_retention_days", 30))
-        if max_context_tokens < 128000:
-            raise ValueError("max_context_tokens must be >= 128000")
-        if target_context_tokens < 20000:
-            raise ValueError("target_context_tokens must be >= 20000")
         if not 0 <= media_original_retention_days <= 3650:
             raise ValueError("media_original_retention_days must be between 0 and 3650")
-        target_context_tokens = min(target_context_tokens, max_context_tokens)
         return {
             "proactive_enabled": bool(payload.get("proactive_enabled", True)),
             "extra_background": self._text(payload, "extra_background"),

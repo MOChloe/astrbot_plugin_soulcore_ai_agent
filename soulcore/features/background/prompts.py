@@ -11,7 +11,7 @@ from ...shared.prompt_document import (
     prompt_field_lines,
     prompt_markup_block,
 )
-from ..ai.service import DEFAULT_RESERVED_OUTPUT_TOKENS
+from ..ai.service import DEFAULT_INTERNAL_OUTPUT_TOKENS
 from .domain import (
     BackgroundAuthorInput,
     BackgroundAuthorKind,
@@ -402,7 +402,7 @@ def _fit(
         limit=budget.stage_input_limit(
             task_definition=definition,
             output_contract=contract,
-            output_reserve_tokens=DEFAULT_RESERVED_OUTPUT_TOKENS,
+            output_reserve_tokens=DEFAULT_INTERNAL_OUTPUT_TOKENS,
         ),
         required_name_fragments=required_block_fragments(author_kind, "creator"),
     )

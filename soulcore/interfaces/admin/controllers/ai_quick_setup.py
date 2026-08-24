@@ -5,10 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from ....features.ai.model_parameters import (
-    DEFAULT_MODEL_MAX_CONTEXT_TOKENS,
-    MINIMUM_MODEL_MAX_CONTEXT_TOKENS,
-)
+from ....features.ai.model_parameters import MINIMUM_MODEL_MAX_CONTEXT_TOKENS
 from .ai_quick_setup_shared import (
     FAST_CAPABILITIES,
     IMAGE_PROTOCOLS,
@@ -73,9 +70,7 @@ class AIQuickSetupViewMixin:
             "enabled": bool(model.get("enabled", True)),
             "config": config,
             "supports_vision": bool(config.get("supports_vision")),
-            "max_context_tokens": int(
-                config.get("max_context_tokens") or DEFAULT_MODEL_MAX_CONTEXT_TOKENS
-            ),
+            "max_context_tokens": int(config.get("max_context_tokens") or 0),
             "image_generation_mode": str(config.get("image_generation_mode") or "IMAGES_API"),
         }
 
@@ -144,11 +139,13 @@ class AIQuickSetupViewMixin:
 
 def _quick_setup_model_view(package: Mapping[str, Any], model: Mapping[str, Any]) -> dict[str, Any]:
     protocol = str(package.get("protocol") or "").upper()
-    max_context_tokens = int(
-        model.get("max_context_tokens")
-        or dict(model.get("config") or {}).get("max_context_tokens")
-        or DEFAULT_MODEL_MAX_CONTEXT_TOKENS
-    )
+    raw_context_tokens = model.get("max_context_tokens")
+    if raw_context_tokens in (None, ""):
+        raw_context_tokens = dict(model.get("config") or {}).get("max_context_tokens")
+    try:
+        max_context_tokens = max(0, min(10_000_000, int(raw_context_tokens or 0)))
+    except (TypeError, ValueError):
+        max_context_tokens = 0
     context_compatible = max_context_tokens >= MINIMUM_MODEL_MAX_CONTEXT_TOKENS
     usages = _quick_setup_model_usages(protocol, context_compatible, model)
     return {
@@ -264,10 +261,6 @@ class AIQuickSetupController(AIQuickSetupSourceMixin, AIQuickSetupViewMixin):
     ) -> dict[str, Any] | None:
         if action == "configure":
             return None
-        if action == "raise_context":
-            if slot != "main":
-                raise ValueError("只有主力模型可以在这里调整上下文上限")
-            return await self._raise_main_context(profile_id, payload)
         if action == "disable":
             if slot == "main":
                 raise ValueError("主力模型不能在快速设置中关闭")
@@ -415,52 +408,6 @@ class AIQuickSetupController(AIQuickSetupSourceMixin, AIQuickSetupViewMixin):
         payload["supports_vision"] = keep_declared_vision
         await self.configuration.save_model(payload, profile_id)
 
-    async def _raise_main_context(
-        self, profile_id: str, payload: Mapping[str, Any]
-    ) -> dict[str, Any]:
-        requested = _requested_main_context(payload.get("max_context_tokens"))
-        backend_id, model, package, current = await self._main_context_model(profile_id)
-        adjusted = max(current, requested)
-        if adjusted > current:
-            model_payload = self._model_payload(
-                model, package, tuple(model.get("capabilities") or ())
-            )
-            model_payload["max_context_tokens"] = adjusted
-            await self.configuration.save_model(model_payload, profile_id)
-        return {
-            "ok": True,
-            "applied": adjusted > current,
-            "slot": "main",
-            "action": "raise_context",
-            "backend_id": backend_id,
-            "previous_max_context_tokens": current,
-            "max_context_tokens": adjusted,
-        }
-
-    async def _main_context_model(
-        self, profile_id: str
-    ) -> tuple[str, Mapping[str, Any], Mapping[str, Any], int]:
-        before = await self.configuration.snapshot(profile_id)
-        main_ids = self._order_backend_ids(
-            dict(before.get("effective_orders") or {}).get("chat.completion") or ()
-        )
-        if not main_ids:
-            raise ValueError("请先完成主力模型设置")
-        backend_id = main_ids[0]
-        model = await self.repository.get_ai_api_model(backend_id)
-        if model is None:
-            raise ValueError("当前主力模型已经不存在")
-        package = await self.repository.get_ai_api_package(
-            str(model.get("package_id") or ""), profile_id=profile_id
-        )
-        if package is None:
-            raise ValueError("当前主力模型不属于这个角色")
-        current = int(
-            dict(model.get("config") or {}).get("max_context_tokens")
-            or DEFAULT_MODEL_MAX_CONTEXT_TOKENS
-        )
-        return backend_id, model, package, current
-
     async def _use_main(self, profile_id: str) -> dict[str, Any]:
         before = await self.configuration.snapshot(profile_id)
         main_ids = self._order_backend_ids(
@@ -547,9 +494,7 @@ class AIQuickSetupController(AIQuickSetupSourceMixin, AIQuickSetupViewMixin):
             "priority": int((existing or {}).get("priority") or 999),
             "enabled": True,
             "supports_vision": bool(candidate.get("supports_vision")),
-            "max_context_tokens": int(
-                candidate.get("max_context_tokens") or DEFAULT_MODEL_MAX_CONTEXT_TOKENS
-            ),
+            "max_context_tokens": int(candidate.get("max_context_tokens") or 0),
             "image_generation_mode": str(candidate.get("image_generation_mode") or "IMAGES_API"),
             "config": dict((existing or {}).get("config") or {}),
         }
@@ -703,16 +648,6 @@ def _apply_candidate_model_options(
         payload["generation_parameters"] = dict(candidate.get("generation_parameters") or {})
     if str(package.get("protocol") or "").upper() == "GEMINI":
         payload["supports_vision"] = False
-
-
-def _requested_main_context(value: Any) -> int:
-    text = str(value or "").strip()
-    if not text.isascii() or not text.isdigit():
-        raise ValueError("建议上下文上限必须是正整数")
-    requested = int(text)
-    if requested < MINIMUM_MODEL_MAX_CONTEXT_TOKENS or requested > 10_000_000:
-        raise ValueError("建议上下文上限超出可配置范围")
-    return requested
 
 
 __all__ = [

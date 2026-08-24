@@ -129,25 +129,33 @@ class StickerRuntimeTransitionMixin:
         if not (master_disabled or player_disabled or web_disabled or generation_disabled):
             return
         terminal = {"SUCCEEDED", "FAILED", "CANCELLED", "RECOVERY_REQUIRED", "DEFERRED"}
-        tasks = await self.ai_repository.list_ai_tasks(
-            profile_id=profile_id, instance_id=instance_id, limit=1000
-        )
-        for task in tasks:
-            if await self._disabled_sticker_task_should_cancel(
-                task,
-                profile_id,
-                instance_id,
-                terminal=terminal,
-                master_disabled=master_disabled,
-                player_disabled=player_disabled,
-                web_disabled=web_disabled,
-                generation_disabled=generation_disabled,
-            ):
-                await self.ai_tasks.cancel(
-                    int(task["task_id"]),
-                    actor_id="sticker-runtime-gate",
-                    reason="sticker runtime configuration disabled",
-                )
+        offset = 0
+        while True:
+            tasks = await self.ai_repository.list_ai_tasks(
+                profile_id=profile_id,
+                instance_id=instance_id,
+                limit=1000,
+                offset=offset,
+            )
+            for task in tasks:
+                if await self._disabled_sticker_task_should_cancel(
+                    task,
+                    profile_id,
+                    instance_id,
+                    terminal=terminal,
+                    master_disabled=master_disabled,
+                    player_disabled=player_disabled,
+                    web_disabled=web_disabled,
+                    generation_disabled=generation_disabled,
+                ):
+                    await self.ai_tasks.cancel(
+                        int(task["task_id"]),
+                        actor_id="sticker-runtime-gate",
+                        reason="sticker runtime configuration disabled",
+                    )
+            if len(tasks) < 1000:
+                break
+            offset += len(tasks)
 
     async def _disabled_sticker_task_should_cancel(
         self,

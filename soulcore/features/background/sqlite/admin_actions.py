@@ -670,6 +670,9 @@ def _load_workspace_story_sources(
     conn: sqlite3.Connection,
     profile_id: str,
     instance_id: str,
+    *,
+    limit: int,
+    offset: int,
 ) -> list[dict[str, Any]]:
     return [
         dict(row)
@@ -679,8 +682,8 @@ def _load_workspace_story_sources(
             FROM background_story_sources
             WHERE profile_id = ? AND instance_id = ?
             ORDER BY story_source_id DESC
-            LIMIT 100""",
-            (profile_id, instance_id),
+            LIMIT ? OFFSET ?""",
+            (profile_id, instance_id, limit, offset),
         )
     ]
 
@@ -689,14 +692,17 @@ def _load_workspace_timeline(
     conn: sqlite3.Connection,
     profile_id: str,
     instance_id: str,
+    *,
+    limit: int,
+    offset: int,
 ) -> list[dict[str, Any]]:
     rows = conn.execute(
         """SELECT event_id, public_ref, source, content,
             frame_start_at, frame_end_at, leftover_text, created_at
         FROM background_role_timeline_events
         WHERE profile_id = ? AND instance_id = ?
-        ORDER BY frame_end_at DESC, event_id DESC LIMIT 100""",
-        (profile_id, instance_id),
+        ORDER BY frame_end_at DESC, event_id DESC LIMIT ? OFFSET ?""",
+        (profile_id, instance_id, limit, offset),
     ).fetchall()
     return [dict(row) for row in rows]
 
@@ -720,6 +726,11 @@ def _load_background_workspace_sql(
     conn: sqlite3.Connection,
     profile_id: str,
     instance_id: str,
+    *,
+    story_page: int,
+    story_page_size: int,
+    timeline_page: int,
+    timeline_page_size: int,
 ) -> dict[str, Any]:
     instance = conn.execute(
         """SELECT * FROM background_instances
@@ -733,6 +744,22 @@ def _load_background_workspace_sql(
         WHERE profile_id = ? AND instance_id = ?""",
         (profile_id, instance_id),
     ).fetchall()
+    story_total = int(
+        conn.execute(
+            """SELECT COUNT(*) AS total FROM background_story_sources
+            WHERE profile_id = ? AND instance_id = ?""",
+            (profile_id, instance_id),
+        ).fetchone()["total"]
+    )
+    timeline_total = int(
+        conn.execute(
+            """SELECT COUNT(*) AS total FROM background_role_timeline_events
+            WHERE profile_id = ? AND instance_id = ?""",
+            (profile_id, instance_id),
+        ).fetchone()["total"]
+    )
+    story_page = _bounded_page(story_page, story_page_size, story_total)
+    timeline_page = _bounded_page(timeline_page, timeline_page_size, timeline_total)
     return {
         "instance": dict(instance),
         "authors": _project_workspace_authors(
@@ -740,9 +767,38 @@ def _load_background_workspace_sql(
             instance_id,
             author_rows,
         ),
-        "story_sources": _load_workspace_story_sources(conn, profile_id, instance_id),
-        "timeline": _load_workspace_timeline(conn, profile_id, instance_id),
+        "story_sources": _load_workspace_story_sources(
+            conn,
+            profile_id,
+            instance_id,
+            limit=story_page_size,
+            offset=(story_page - 1) * story_page_size,
+        ),
+        "story_source_pagination": _page_view(story_page, story_page_size, story_total),
+        "timeline": _load_workspace_timeline(
+            conn,
+            profile_id,
+            instance_id,
+            limit=timeline_page_size,
+            offset=(timeline_page - 1) * timeline_page_size,
+        ),
+        "timeline_pagination": _page_view(timeline_page, timeline_page_size, timeline_total),
         "current_view": _load_workspace_current_view(conn, profile_id, instance_id),
+    }
+
+
+def _bounded_page(page: int, page_size: int, total: int) -> int:
+    page_count = max(1, (total + page_size - 1) // page_size)
+    return max(1, min(int(page), page_count))
+
+
+def _page_view(page: int, page_size: int, total: int) -> dict[str, int | bool]:
+    return {
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "page_count": max(1, (total + page_size - 1) // page_size),
+        "has_more": page * page_size < total,
     }
 
 
@@ -757,11 +813,26 @@ class BackgroundAdminActions(QuickSetupLifeMixin):
         self,
         profile_id: str,
         instance_id: str,
+        *,
+        story_page: int = 1,
+        story_page_size: int = 10,
+        timeline_page: int = 1,
+        timeline_page_size: int = 15,
     ) -> dict[str, Any]:
         await self.ensure_instance(profile_id, instance_id)
+        story_size = max(1, min(int(story_page_size), 50))
+        timeline_size = max(1, min(int(timeline_page_size), 50))
         return dict(
             await self.db.call(
-                lambda conn: _load_background_workspace_sql(conn, profile_id, instance_id)
+                lambda conn: _load_background_workspace_sql(
+                    conn,
+                    profile_id,
+                    instance_id,
+                    story_page=max(1, int(story_page)),
+                    story_page_size=story_size,
+                    timeline_page=max(1, int(timeline_page)),
+                    timeline_page_size=timeline_size,
+                )
             )
         )
 

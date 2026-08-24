@@ -7,10 +7,7 @@ from collections.abc import Mapping
 from typing import Any
 from urllib.parse import urlsplit
 
-from ....features.ai.model_parameters import (
-    DEFAULT_MODEL_MAX_CONTEXT_TOKENS,
-    MINIMUM_MODEL_MAX_CONTEXT_TOKENS,
-)
+from ....features.ai.model_parameters import MINIMUM_MODEL_MAX_CONTEXT_TOKENS
 from .ai_quick_setup_shared import (
     IMAGE_PROTOCOLS,
     TEXT_PROTOCOLS,
@@ -78,11 +75,11 @@ class AIQuickSetupSourceMixin:
             raise ValueError("选择的模型不属于当前角色")
         self._require_protocol_for_slot(slot, str(package.get("protocol") or ""))
         config = dict(model.get("config") or {})
-        max_context_tokens = int(
-            config.get("max_context_tokens") or DEFAULT_MODEL_MAX_CONTEXT_TOKENS
-        )
+        max_context_tokens = _configured_context_limit(config.get("max_context_tokens"))
         if slot != "image" and max_context_tokens < MINIMUM_MODEL_MAX_CONTEXT_TOKENS:
-            raise ValueError("这个模型的上下文窗口低于 SoulCore 要求的 128K")
+            if max_context_tokens < 1:
+                raise ValueError("这个模型还没有填写总上下文容量")
+            raise ValueError("这个模型填写的总上下文容量无效")
         return {
             "backend_id": backend_id,
             "package_id": str(package["package_id"]),
@@ -160,9 +157,7 @@ class AIQuickSetupSourceMixin:
             "model_key": model_key,
             "display_name": str(source["display_name"]),
             "supports_vision": bool(source.get("supports_vision")),
-            "max_context_tokens": int(
-                source.get("max_context_tokens") or DEFAULT_MODEL_MAX_CONTEXT_TOKENS
-            ),
+            "max_context_tokens": int(source.get("max_context_tokens") or 0),
             "image_generation_mode": str(
                 payload.get("image_generation_mode")
                 or source.get("image_generation_mode")
@@ -242,6 +237,9 @@ class AIQuickSetupSourceMixin:
         if not base_url or not model_key or not secret:
             raise ValueError("请填写 API 地址、模型名称和密钥")
         reasoning_effort = str(selection.get("reasoning_effort") or "").strip().lower()
+        generation_parameters: dict[str, Any] = {}
+        if reasoning_effort:
+            generation_parameters["reasoning_effort"] = reasoning_effort
         return {
             "protocol": protocol,
             "base_url": base_url,
@@ -251,9 +249,7 @@ class AIQuickSetupSourceMixin:
             "supports_vision": bool(selection.get("supports_vision")),
             "max_context_tokens": _manual_context_limit(slot, selection),
             "image_generation_mode": str(selection.get("image_generation_mode") or "IMAGES_API"),
-            "generation_parameters": (
-                {"reasoning_effort": reasoning_effort} if reasoning_effort else {}
-            ),
+            "generation_parameters": generation_parameters,
         }
 
     async def _save_package_and_secret(
@@ -493,15 +489,16 @@ class AIQuickSetupSourceMixin:
 
 def _manual_context_limit(slot: str, selection: Mapping[str, Any]) -> int:
     if slot == "image":
-        return DEFAULT_MODEL_MAX_CONTEXT_TOKENS
+        return 0
     raw = selection.get("max_context_tokens")
-    raw = DEFAULT_MODEL_MAX_CONTEXT_TOKENS if raw in (None, "") else raw
+    if raw in (None, ""):
+        raise ValueError("请按服务商模型文档填写模型总上下文容量")
     text = str(raw).strip()
     if not text.isascii() or not text.isdigit():
-        raise ValueError("模型最大 Token 必须是正整数")
+        raise ValueError("模型总上下文容量必须是正整数")
     value = int(text)
     if value < MINIMUM_MODEL_MAX_CONTEXT_TOKENS:
-        raise ValueError("文字与视觉模型的最大 Token 不能低于 128000")
+        raise ValueError("模型总上下文容量必须至少能容纳一个输入 Token 和一个输出 Token")
     return min(value, 10_000_000)
 
 
@@ -516,16 +513,28 @@ def _astrbot_protocol(adapter: str, base_url: str) -> str:
 
 
 def _astrbot_context_limit(config: Mapping[str, Any]) -> int:
+    raw = config.get("max_context_tokens")
+    if raw in (None, ""):
+        return 0
     try:
         return max(
             1,
             min(
                 10_000_000,
-                int(config.get("max_context_tokens") or DEFAULT_MODEL_MAX_CONTEXT_TOKENS),
+                int(raw),
             ),
         )
     except (TypeError, ValueError):
-        return DEFAULT_MODEL_MAX_CONTEXT_TOKENS
+        return 0
+
+
+def _configured_context_limit(raw: Any) -> int:
+    if raw in (None, "") or isinstance(raw, bool):
+        return 0
+    try:
+        return max(0, min(10_000_000, int(raw)))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _astrbot_unavailable_reason(
@@ -544,7 +553,9 @@ def _astrbot_unavailable_reason(
     if config.get("proxy") or config.get("custom_headers"):
         return "当前配置依赖代理或自定义请求头"
     if protocol in TEXT_PROTOCOLS and max_context_tokens < MINIMUM_MODEL_MAX_CONTEXT_TOKENS:
-        return "模型上下文窗口低于 SoulCore 要求的 128K"
+        if max_context_tokens < 1:
+            return "AstrBot 配置未提供模型总上下文容量"
+        return "AstrBot 配置中的模型总上下文容量无效"
     return ""
 
 

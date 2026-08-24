@@ -701,6 +701,7 @@ class AIWorkRecordsController:
         scope = str(row.get("object_scope") or "")
         return {
             "kind": "群聊" if scope == "group" else "好友" if scope == "private" else "后台任务",
+            "scope": scope,
         }
 
     @staticmethod

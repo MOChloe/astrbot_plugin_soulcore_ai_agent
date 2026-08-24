@@ -36,16 +36,36 @@ class SqlitePlayerProfileRepository(SqliteRepository):
         self,
         scope: PlayerProfileScope,
         entry_id: str,
+        *,
+        limit: int = 20,
+        offset: int = 0,
     ) -> tuple[PlayerProfileEntry, ...]:
         def operation(conn: sqlite3.Connection) -> tuple[PlayerProfileEntry, ...]:
             self._require_parent(conn, scope)
             rows = conn.execute(
                 """SELECT * FROM player_profile_entry_revisions
                 WHERE profile_id = ? AND instance_id = ? AND subject_key = ? AND entry_id = ?
-                ORDER BY entry_version DESC""",
-                (*scope.persistence_key, entry_id),
+                ORDER BY entry_version DESC
+                LIMIT ? OFFSET ?""",
+                (*scope.persistence_key, entry_id, max(1, int(limit)), max(0, int(offset))),
             ).fetchall()
             return tuple(decode_entry(dict(row), scope) for row in rows)
+
+        return await self.db.call(operation)
+
+    async def count_entry_revisions(
+        self,
+        scope: PlayerProfileScope,
+        entry_id: str,
+    ) -> int:
+        def operation(conn: sqlite3.Connection) -> int:
+            self._require_parent(conn, scope)
+            row = conn.execute(
+                """SELECT COUNT(*) AS total FROM player_profile_entry_revisions
+                WHERE profile_id = ? AND instance_id = ? AND subject_key = ? AND entry_id = ?""",
+                (*scope.persistence_key, entry_id),
+            ).fetchone()
+            return int(row["total"] if row is not None else 0)
 
         return await self.db.call(operation)
 

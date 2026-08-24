@@ -267,7 +267,10 @@ class AiTaskRecords:
         instance_id: str | None = None,
         status: str | None = None,
         task_type: str | None = None,
+        task_type_prefix: str | None = None,
+        has_error: bool = False,
         limit: int = 100,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
         clauses = ["1 = 1"]
         params: list[Any] = []
@@ -283,13 +286,50 @@ class AiTaskRecords:
         if task_type is not None:
             clauses.append("task_type = ?")
             params.append(str(task_type).upper())
-        params.append(max(1, min(int(limit), 1000)))
+        if task_type_prefix is not None:
+            clauses.append("task_type LIKE ?")
+            params.append(f"{str(task_type_prefix).upper()}%")
+        if has_error:
+            clauses.append("NULLIF(TRIM(COALESCE(last_error, '')), '') IS NOT NULL")
+        params.extend((max(1, min(int(limit), 1000)), max(0, int(offset))))
         rows = await self.db.fetch_all(
             f"""SELECT * FROM ai_tasks WHERE {" AND ".join(clauses)}
-            ORDER BY created_at DESC, task_id DESC LIMIT ?""",
+            ORDER BY created_at DESC, task_id DESC LIMIT ? OFFSET ?""",
             params,
         )
         return [self._ai_task(row) for row in rows]
+
+    async def count_ai_tasks(
+        self,
+        *,
+        profile_id: str | None = None,
+        instance_id: str | None = None,
+        status: str | None = None,
+        task_type: str | None = None,
+        task_type_prefix: str | None = None,
+        has_error: bool = False,
+    ) -> int:
+        clauses = ["1 = 1"]
+        params: list[Any] = []
+        for column, value in (
+            ("profile_id", profile_id),
+            ("instance_id", instance_id),
+            ("status", str(status).upper() if status is not None else None),
+            ("task_type", str(task_type).upper() if task_type is not None else None),
+        ):
+            if value is not None:
+                clauses.append(f"{column} = ?")
+                params.append(value)
+        if task_type_prefix is not None:
+            clauses.append("task_type LIKE ?")
+            params.append(f"{str(task_type_prefix).upper()}%")
+        if has_error:
+            clauses.append("NULLIF(TRIM(COALESCE(last_error, '')), '') IS NOT NULL")
+        row = await self.db.fetch_one(
+            f"SELECT COUNT(*) AS total FROM ai_tasks WHERE {' AND '.join(clauses)}",
+            params,
+        )
+        return int(row["total"] if row is not None else 0)
 
     def _claim_ai_tasks_sql(
         self,

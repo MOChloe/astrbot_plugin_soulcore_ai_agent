@@ -26,10 +26,11 @@ from .command_string_values import (
     resolve_reference_list,
 )
 from .context_budget import (
-    DEFAULT_RESERVED_OUTPUT_TOKENS,
+    DEFAULT_INTERNAL_OUTPUT_TOKENS,
     ModelContextRequirement,
     available_prompt_tokens,
     configured_model_context_tokens,
+    configured_model_generation_parameters,
     estimate_model_context_requirement,
 )
 from .diagnostics import classify_generic_error, safe_ai_failure_details
@@ -67,7 +68,7 @@ __all__ = [
     "CommandSpec",
     "CommandProtocolError",
     "DurableTaskRepositoryPort",
-    "DEFAULT_RESERVED_OUTPUT_TOKENS",
+    "DEFAULT_INTERNAL_OUTPUT_TOKENS",
     "MainCoreCommandRegistry",
     "ModelVisibleCommandResult",
     "MainCoreCommandSet",
@@ -80,6 +81,7 @@ __all__ = [
     "available_prompt_tokens",
     "boolean_validator",
     "configured_model_context_tokens",
+    "configured_model_generation_parameters",
     "estimate_model_context_requirement",
     "execute_nonterminal_batch",
     "parse_model_turn",

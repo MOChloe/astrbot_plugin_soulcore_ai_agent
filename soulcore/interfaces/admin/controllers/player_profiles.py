@@ -58,17 +58,56 @@ class PlayerProfilesAdminController:
     ) -> dict[str, Any]:
         context = await self.identity.context(profile_id, instance_id)
         subjects = await self._subjects(profile_id, instance_id, scope, context)
-        page = max(1, int(payload.get("page") or 1))
-        page_size = max(5, min(int(payload.get("page_size") or 20), 50))
-        start = (page - 1) * page_size
+        page, page_size, start, entry_page_size, requested_person_ref = _snapshot_paging(
+            profile_id,
+            instance_id,
+            subjects,
+            payload,
+        )
         selected = self._selected_subject(
             subjects,
-            str(payload.get("person_ref") or ""),
+            requested_person_ref,
             profile_id,
             instance_id,
         )
+        people = await self._people_page(
+            profile_id,
+            instance_id,
+            subjects[start : start + page_size],
+            selected,
+        )
+        page_view = {
+            "people": people,
+            "pagination": _pagination(page, page_size, len(subjects)),
+        }
+        if selected is None:
+            return {
+                **page_view,
+                "selected_person_ref": "",
+                "profile_version": 0,
+                "entries": [],
+                "entry_pagination": _pagination(1, entry_page_size, 0),
+            }
+        selected_view = await self._selected_profile_view(
+            profile_id,
+            instance_id,
+            selected,
+            context,
+            payload,
+            entry_page_size,
+        )
+        return {**page_view, **selected_view}
+
+    async def _people_page(
+        self,
+        profile_id: str,
+        instance_id: str,
+        subjects: list[tuple[str, str]],
+        selected: tuple[str, str] | None,
+    ) -> list[dict[str, Any]]:
+        selected_key = selected[0] if selected is not None else None
         people = []
-        for subject_key, label in subjects[start : start + page_size]:
+        for subject_key, label in subjects:
             snapshot = await self.repository.load_player_profile(
                 PlayerProfileScope(profile_id, instance_id, subject_key)
             )
@@ -78,17 +117,20 @@ class PlayerProfilesAdminController:
                     "display_name": label,
                     "active_count": len(snapshot.effective_entries),
                     "removed_count": len(snapshot.entries) - len(snapshot.effective_entries),
-                    "selected": selected is not None and subject_key == selected[0],
+                    "selected": subject_key == selected_key,
                 }
             )
-        if selected is None:
-            return {
-                "people": people,
-                "pagination": _pagination(page, page_size, len(subjects)),
-                "selected_person_ref": "",
-                "profile_version": 0,
-                "entries": [],
-            }
+        return people
+
+    async def _selected_profile_view(
+        self,
+        profile_id: str,
+        instance_id: str,
+        selected: tuple[str, str],
+        context: Any,
+        payload: dict[str, Any],
+        entry_page_size: int,
+    ) -> dict[str, Any]:
         subject_key, label = selected
         snapshot = await self.repository.load_player_profile(
             PlayerProfileScope(profile_id, instance_id, subject_key)
@@ -98,24 +140,22 @@ class PlayerProfilesAdminController:
             key=lambda item: (item.status is ProfileEntryStatus.ACTIVE, item.updated_at),
             reverse=True,
         )
+        entry_page = _bounded_page(
+            max(1, int(payload.get("entry_page") or 1)),
+            entry_page_size,
+            len(entries),
+        )
+        entry_start = (entry_page - 1) * entry_page_size
         return {
-            "people": people,
-            "pagination": _pagination(page, page_size, len(subjects)),
             "selected_person_ref": _person_ref(profile_id, instance_id, subject_key),
             "selected_display_name": label,
             "profile_version": snapshot.version,
-            "entries": [self._entry_view(item, context) for item in entries],
-            "options": {
-                "categories": [
-                    {"value": item.value, "label": _CATEGORY_LABELS[item]}
-                    for item in ProfileCategory
-                ],
-                "sensitivities": [
-                    {"value": "NORMAL", "label": "普通"},
-                    {"value": "PRIVATE", "label": "私密"},
-                    {"value": "SENSITIVE", "label": "敏感"},
-                ],
-            },
+            "entries": [
+                self._entry_view(item, context)
+                for item in entries[entry_start : entry_start + entry_page_size]
+            ],
+            "entry_pagination": _pagination(entry_page, entry_page_size, len(entries)),
+            "options": _profile_options(),
         }
 
     async def entry_detail(
@@ -138,11 +178,24 @@ class PlayerProfilesAdminController:
         entry = self._require_entry(
             snapshot.entries, profile_scope, str(payload.get("entry_ref") or "")
         )
-        revisions = await self.repository.list_entry_revisions(profile_scope, entry.entry_id)
+        history_page_size = max(5, min(int(payload.get("page_size") or 12), 50))
+        history_total = await self.repository.count_entry_revisions(profile_scope, entry.entry_id)
+        history_page = _bounded_page(
+            max(1, int(payload.get("page") or 1)),
+            history_page_size,
+            history_total,
+        )
+        revisions = await self.repository.list_entry_revisions(
+            profile_scope,
+            entry.entry_id,
+            limit=history_page_size,
+            offset=(history_page - 1) * history_page_size,
+        )
         return {
             "profile_version": snapshot.version,
             "entry": self._entry_view(entry, context),
             "history": [self._revision_view(item, context) for item in revisions],
+            "pagination": _pagination(history_page, history_page_size, history_total),
         }
 
     async def action(
@@ -436,13 +489,69 @@ def _entry_ref(scope: PlayerProfileScope, entry_id: str) -> str:
     return "portrait-" + hashlib.sha256(source.encode()).hexdigest()[:24]
 
 
+def _snapshot_paging(
+    profile_id: str,
+    instance_id: str,
+    subjects: list[tuple[str, str]],
+    payload: dict[str, Any],
+) -> tuple[int, int, int, int, str]:
+    page_size = max(5, min(int(payload.get("page_size") or 20), 50))
+    requested_person_ref = str(payload.get("person_ref") or "")
+    requested_page = max(1, int(payload.get("page") or 1))
+    if requested_person_ref and "page" not in payload:
+        requested_page = _person_page(
+            profile_id,
+            instance_id,
+            subjects,
+            requested_person_ref,
+            page_size,
+        )
+    page = _bounded_page(requested_page, page_size, len(subjects))
+    start = (page - 1) * page_size
+    entry_page_size = max(5, min(int(payload.get("entry_page_size") or 20), 50))
+    if not requested_person_ref and start < len(subjects):
+        requested_person_ref = _person_ref(profile_id, instance_id, subjects[start][0])
+    return page, page_size, start, entry_page_size, requested_person_ref
+
+
+def _person_page(
+    profile_id: str,
+    instance_id: str,
+    subjects: list[tuple[str, str]],
+    requested_person_ref: str,
+    page_size: int,
+) -> int:
+    for index, (subject_key, _label) in enumerate(subjects):
+        if _person_ref(profile_id, instance_id, subject_key) == requested_person_ref:
+            return index // page_size + 1
+    return 1
+
+
+def _profile_options() -> dict[str, list[dict[str, str]]]:
+    return {
+        "categories": [
+            {"value": item.value, "label": _CATEGORY_LABELS[item]} for item in ProfileCategory
+        ],
+        "sensitivities": [
+            {"value": "NORMAL", "label": "普通"},
+            {"value": "PRIVATE", "label": "私密"},
+            {"value": "SENSITIVE", "label": "敏感"},
+        ],
+    }
+
+
 def _pagination(page: int, page_size: int, total: int) -> dict[str, Any]:
     return {
         "page": page,
         "page_size": page_size,
         "total": total,
+        "page_count": max(1, (total + page_size - 1) // page_size),
         "has_more": page * page_size < total,
     }
+
+
+def _bounded_page(page: int, page_size: int, total: int) -> int:
+    return max(1, min(int(page), max(1, (total + page_size - 1) // page_size)))
 
 
 __all__ = ["PURGE_CONFIRMATION", "PlayerProfilesAdminController"]

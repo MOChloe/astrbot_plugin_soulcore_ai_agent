@@ -286,7 +286,10 @@ class DiagnosticsAdminController:
         ]
         ai_snapshot = await self._redacted_ai_snapshot(profile_id, instance_id)
         web = await self._web_support(profile_id, instance_id)
-        logs = await self.event_log.list_logs(profile_id, instance_id=instance_id, limit=500)
+        # The log store already has an explicit 1,000-row retention boundary per profile.
+        # Export every retained row for the selected instance instead of silently applying
+        # a second, smaller cutoff that would hide older diagnostics.
+        logs = await self.event_log.list_logs(profile_id, instance_id=instance_id, limit=1000)
         bundle = {
             "format": "soulcore-support-bundle",
             "generated_at": datetime.now().astimezone().isoformat(),
@@ -300,6 +303,7 @@ class DiagnosticsAdminController:
             "web_research": web,
             "logs": jsonable(logs),
             "log_retention_limit": 1000,
+            "logs_complete_within_retention": True,
             "model_content_included": bool(include_model_content),
         }
         return _support_safe(bundle, include_model_content=include_model_content)
@@ -591,11 +595,21 @@ class DiagnosticsAdminController:
             backend.pop("credential_last4", None)
             backend.pop("credential_source", None)
             backend["credential_configured"] = bool(backend.get("credential_configured"))
-        tasks = await self.ai_repository.list_ai_tasks(
-            profile_id=profile_id,
-            instance_id=instance_id,
-            limit=1000,
-        )
+        tasks: list[Mapping[str, Any]] = []
+        offset = 0
+        while True:
+            page = list(
+                await self.ai_repository.list_ai_tasks(
+                    profile_id=profile_id,
+                    instance_id=instance_id,
+                    limit=1000,
+                    offset=offset,
+                )
+            )
+            tasks.extend(page)
+            if len(page) < 1000:
+                break
+            offset += len(page)
         counts: dict[str, int] = {}
         errors: dict[str, int] = {}
         for task in tasks:

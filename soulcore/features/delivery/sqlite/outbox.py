@@ -287,6 +287,7 @@ class OutboxRecords:
         *,
         status: OutboxStatus | None = None,
         limit: int = 50,
+        offset: int = 0,
     ) -> list[OutboxItem]:
         sql = f"""SELECT {INSTANCE_OUTBOX_SELECT} FROM instance_outbox
             WHERE profile_id = ? AND instance_id = ?"""
@@ -294,16 +295,55 @@ class OutboxRecords:
         if status is not None:
             sql += " AND status = ?"
             params.append(status.value)
-        sql += " ORDER BY outbox_id DESC LIMIT ?"
-        params.append(limit)
+        sql += " ORDER BY outbox_id DESC LIMIT ? OFFSET ?"
+        params.extend((max(1, int(limit)), max(0, int(offset))))
         return [self._outbox(row) for row in await self.db.fetch_all(sql, params)]
+
+    async def count_instance_outbox(
+        self,
+        profile_id: str,
+        instance_id: str,
+        *,
+        status: OutboxStatus | None = None,
+    ) -> int:
+        sql = """SELECT COUNT(*) AS total FROM instance_outbox
+            WHERE profile_id = ? AND instance_id = ?"""
+        params: list[Any] = [profile_id, instance_id]
+        if status is not None:
+            sql += " AND status = ?"
+            params.append(status.value)
+        row = await self.db.fetch_one(sql, params)
+        return int(row["total"] if row is not None else 0)
+
+    async def instance_outbox_statistics(
+        self,
+        profile_id: str,
+        instance_id: str,
+    ) -> dict[str, int]:
+        rows = await self.db.fetch_all(
+            """SELECT status, COUNT(*) AS total FROM instance_outbox
+            WHERE profile_id = ? AND instance_id = ?
+            GROUP BY status""",
+            (profile_id, instance_id),
+        )
+        status_counts = {str(row["status"]): int(row["total"]) for row in rows}
+        total = sum(status_counts.values())
+        failed = status_counts.get(OutboxStatus.FAILED.value, 0)
+        cancelled = status_counts.get(OutboxStatus.CANCELLED.value, 0)
+        return {
+            "total": total,
+            "pending": max(0, total - failed - cancelled),
+            "failed": failed,
+            "cancelled": cancelled,
+        }
 
     async def list_instance_player_history_links(
         self,
         profile_id: str,
         instance_id: str,
         *,
-        limit: int = 10_000,
+        limit: int = 1_000,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
         """Read only the causal delivery links needed by the player history projection."""
 
@@ -312,36 +352,15 @@ class OutboxRecords:
             status, payload_json, not_before_at, interrupt_policy, created_at
             FROM instance_outbox
             WHERE profile_id = ? AND instance_id = ?
-            ORDER BY outbox_id DESC LIMIT ?""",
-            (profile_id, instance_id, max(1, min(int(limit), 10_000))),
+            ORDER BY outbox_id DESC LIMIT ? OFFSET ?""",
+            (
+                profile_id,
+                instance_id,
+                max(1, min(int(limit), 1_000)),
+                max(0, int(offset)),
+            ),
         )
         return [self._record(row, json_columns=("payload_json",)) for row in rows]
-
-    async def list_profile_recent_failed_outbox(
-        self,
-        profile_id: str,
-        *,
-        limit_per_instance: int = 20,
-    ) -> list[OutboxItem]:
-        """Return failed items that are still inside each contact's recent window."""
-
-        bounded_limit = max(1, min(int(limit_per_instance), 100))
-        rows = await self.db.fetch_all(
-            f"""WITH recent AS (
-                SELECT instance_outbox.*,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY instance_id ORDER BY outbox_id DESC
-                    ) AS recent_rank
-                FROM instance_outbox
-                WHERE profile_id = ?
-            )
-            SELECT {INSTANCE_OUTBOX_SELECT}
-            FROM recent
-            WHERE recent_rank <= ? AND status = 'FAILED'
-            ORDER BY instance_id, outbox_id DESC""",
-            (profile_id, bounded_limit),
-        )
-        return [self._outbox(row) for row in rows]
 
     async def claim_instance_outbox(
         self, profile_id: str, instance_id: str, outbox_id: int

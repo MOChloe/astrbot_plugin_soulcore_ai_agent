@@ -61,21 +61,13 @@ class RunnerContextMixin:
     async def resolve_backend_hint(
         self, role: Any, route_umo: str, *, capability: str = "chat.completion"
     ) -> Any | None:
-        """Public administration-facing backend resolution boundary."""
-        minimum = int(role.max_context_tokens) if capability == "chat.completion" else 0
-        resolved = await self._resolve_backend_hint(
+        """Resolve the preferred model; actual prompt size drives any later switch."""
+
+        return await self._resolve_backend_hint(
             role,
             route_umo,
             capability=capability,
-            minimum_context_tokens=minimum,
         )
-        if resolved is None and minimum:
-            resolved = await self._resolve_backend_hint(
-                role,
-                route_umo,
-                capability=capability,
-            )
-        return resolved
 
     def _pick_ready_route(self, routes: list[CharacterInstance]) -> str | None:
         for route in routes:

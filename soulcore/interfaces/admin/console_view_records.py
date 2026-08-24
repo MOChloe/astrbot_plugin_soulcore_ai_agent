@@ -113,7 +113,11 @@ def _file_meta(item: Mapping[str, Any]) -> list[str]:
 
 
 def _sticker_meta(item: Mapping[str, Any]) -> list[str]:
-    values = []
+    values = [
+        "当前聊天范围共享"
+        if str(item.get("library_kind") or "").upper() == "CORE"
+        else "仅当前好友或群"
+    ]
     if item.get("recent_usage_count") is not None:
         values.append(f"近期使用 {int(item['recent_usage_count'])} 次")
     if item.get("reinforcement_score") is not None:
@@ -298,7 +302,7 @@ def _sequence_or_scalars(value: Any) -> list[Any]:
 
 def _context_warning(value: Any) -> str:
     labels = {
-        "provider_context_window_unknown": "模型没有声明上下文窗口，当前使用保守预算。",
+        "provider_context_window_unknown": "模型没有声明总上下文容量，当前不能用于文字请求。",
         "dialogue_floor_exceeds_source_share": "近期对话较长，已优先保留当前交流现场。",
     }
     return labels.get(str(value or ""), "部分上下文已按预算缩减。")

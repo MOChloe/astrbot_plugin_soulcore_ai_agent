@@ -524,8 +524,8 @@ class RequestBudgetGuard:
         if protected_tokens > maximum:
             return (
                 "protected_content_exceeds_hard_limit",
-                "SoulCore protected context exceeds the effective MaxToken; "
-                "increase max_context_tokens or use a model with a larger context window",
+                "SoulCore protected context exceeds the final request limit; "
+                "reduce protected content or use a model with a larger context capacity",
             )
 
         dialogue_failure = self._dialogue_floor_failure(
@@ -539,7 +539,7 @@ class RequestBudgetGuard:
         remaining_data = sorted({item.source.value for item in working if not item.protected})
         return (
             "unhandled_data_source_exceeds_hard_limit",
-            "Context data still exceeds MaxToken after all permitted trimming; "
+            "Context data still exceeds the final request limit after all permitted trimming; "
             f"remaining data sources: {', '.join(remaining_data) or 'unknown'}",
         )
 
@@ -575,7 +575,7 @@ class RequestBudgetGuard:
                 return (
                     "minimum_dialogue_floor_exceeds_hard_limit",
                     "The protected context plus SoulCore's minimum recent-dialogue "
-                    "structures cannot fit MaxToken; increase the configured limit",
+                    "structures cannot fit the final request limit",
                 )
         return None
 

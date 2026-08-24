@@ -39,31 +39,100 @@ class BackgroundAdminController:
         self.scheduler = scheduler
         self.ai_repository = ai_repository
 
-    async def workspace(self, profile_id: str, instance_id: str) -> dict[str, Any]:
+    async def workspace(
+        self,
+        profile_id: str,
+        instance_id: str,
+        *,
+        story_page: int = 1,
+        story_page_size: int = 10,
+        timeline_page: int = 1,
+        timeline_page_size: int = 15,
+    ) -> dict[str, Any]:
         await self.profiles.require_role_instance(profile_id, instance_id)
         source = _mapping(
-            await self.repository.load_background_workspace(profile_id, instance_id),
+            await self.repository.load_background_workspace(
+                profile_id,
+                instance_id,
+                story_page=story_page,
+                story_page_size=story_page_size,
+                timeline_page=timeline_page,
+                timeline_page_size=timeline_page_size,
+            ),
             "background workspace",
         )
         return _workspace_view(source)
 
-    async def world_snapshot(self, profile_id: str) -> dict[str, Any]:
+    async def world_snapshot(
+        self,
+        profile_id: str,
+        *,
+        lore_page: int | None = None,
+        lore_page_size: int = 20,
+        boundary_page: int | None = None,
+        boundary_page_size: int = 20,
+        boundary_enabled_only: bool = False,
+    ) -> dict[str, Any]:
         """Profile-level seed editor used by the settings workspace."""
 
         await self.profiles.require_known_profile(profile_id)
         world = await self.seed_repository.get_world_definition(profile_id)
-        lore = await self.seed_repository.list_world_lore_entries(
-            profile_id, include_content=True, limit=500
+        lore_total = await self.seed_repository.count_world_lore_entries(profile_id)
+        boundary_total = await self.seed_repository.count_creative_boundaries(
+            profile_id, enabled_only=boundary_enabled_only
         )
-        boundaries = await self.seed_repository.list_creative_boundaries(
-            profile_id, enabled_only=False
-        )
+        if lore_page is None:
+            lore = await self._all_world_lore(profile_id, lore_total)
+            lore_pagination = _pagination(1, max(1, lore_total), lore_total)
+        else:
+            lore_size = max(1, min(int(lore_page_size), 50))
+            lore_page = _bounded_page(lore_page, lore_size, lore_total)
+            lore = await self.seed_repository.list_world_lore_entries(
+                profile_id,
+                include_content=True,
+                limit=lore_size,
+                offset=(lore_page - 1) * lore_size,
+            )
+            lore_pagination = _pagination(lore_page, lore_size, lore_total)
+        if boundary_page is None:
+            boundaries = await self.seed_repository.list_creative_boundaries(
+                profile_id, enabled_only=boundary_enabled_only
+            )
+            boundary_pagination = _pagination(1, max(1, boundary_total), boundary_total)
+        else:
+            boundary_size = max(1, min(int(boundary_page_size), 50))
+            boundary_page = _bounded_page(boundary_page, boundary_size, boundary_total)
+            boundaries = await self.seed_repository.list_creative_boundaries(
+                profile_id,
+                enabled_only=boundary_enabled_only,
+                limit=boundary_size,
+                offset=(boundary_page - 1) * boundary_size,
+            )
+            boundary_pagination = _pagination(boundary_page, boundary_size, boundary_total)
         return {
             "profile_id": profile_id,
             "definition": _definition(world),
             "lore": [_lore(item) for item in lore],
             "boundaries": [_boundary(item) for item in boundaries],
+            "pagination": {
+                "lore": lore_pagination,
+                "boundaries": boundary_pagination,
+            },
         }
+
+    async def _all_world_lore(self, profile_id: str, total: int) -> list[Any]:
+        rows: list[Any] = []
+        page_size = 500
+        for offset in range(0, total, page_size):
+            rows.extend(
+                await self.seed_repository.list_world_lore_entries(
+                    profile_id,
+                    include_content=True,
+                    limit=page_size,
+                    offset=offset,
+                )
+            )
+        return rows
 
     async def quick_setup_life_snapshot(self, profile_id: str) -> dict[str, Any]:
         await self.profiles.require_known_profile(profile_id)
@@ -340,7 +409,13 @@ def _workspace_view(source: Mapping[str, Any]) -> dict[str, Any]:
         "current_role": _current_view(_mapping(current, "current_view", allow_empty=True)),
         "authors": authors,
         "story_sources": story_sources,
+        "story_source_pagination": _mapping(
+            source.get("story_source_pagination"), "story source pagination", allow_empty=True
+        ),
         "timeline": timeline,
+        "timeline_pagination": _mapping(
+            source.get("timeline_pagination"), "timeline pagination", allow_empty=True
+        ),
         "settings": _workspace_settings(instance, authors),
         "problem_count": _problem_count(authors),
     }
@@ -509,6 +584,20 @@ def _strings(value: Any) -> list[str]:
     if not isinstance(value, (list, tuple)):
         return []
     return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _bounded_page(page: int, page_size: int, total: int) -> int:
+    return max(1, min(int(page), max(1, (total + page_size - 1) // page_size)))
+
+
+def _pagination(page: int, page_size: int, total: int) -> dict[str, int | bool]:
+    return {
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "page_count": max(1, (total + page_size - 1) // page_size),
+        "has_more": page * page_size < total,
+    }
 
 
 def _definition(row: Any) -> dict[str, Any]:

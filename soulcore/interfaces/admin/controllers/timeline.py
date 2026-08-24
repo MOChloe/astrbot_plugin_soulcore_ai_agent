@@ -6,6 +6,7 @@ import uuid
 from collections.abc import Mapping
 from typing import Any
 
+from ....contracts.models import OutboxStatus
 from ....contracts.runtime_limits import DURABLE_AI_MAX_ATTEMPTS
 from ....features.ai.ports import DurableTaskRepositoryPort
 from ....features.conversation.ports import ConversationRepositoryPort
@@ -15,6 +16,7 @@ from ....features.main_core.service import MainCoreRunner
 from ....features.profiles.ports import ProfilesRepositoryPort
 from ....features.timeline.ports import TimelineRepositoryPort
 from ...astrbot import DeliveryTransport
+from ..delivery_attention import delivery_failure_occurrence_id
 from ..presentation import jsonable
 from .profiles import ProfilesAdminController
 
@@ -49,15 +51,35 @@ class TimelineAdminController:
         *,
         message_page: int = 1,
         message_page_size: int = 20,
+        intent_page: int = 1,
+        intent_page_size: int = 20,
+        run_page: int = 1,
+        run_page_size: int = 20,
+        outbox_page: int = 1,
+        outbox_page_size: int = 20,
     ) -> dict[str, Any]:
         instance = await self.profiles.require_role_instance(profile_id, instance_id)
         result = self._diagnostic_base()
-        await self._add_state_views(result, profile_id, instance_id)
+        await self._add_state_views(
+            result,
+            profile_id,
+            instance_id,
+            intent_page=intent_page,
+            intent_page_size=intent_page_size,
+        )
         await self._add_delivery_views(result, profile_id, instance)
         await self._add_message_views(
             result, profile_id, instance_id, message_page, message_page_size
         )
-        await self._add_runtime_lists(result, profile_id, instance_id)
+        await self._add_runtime_lists(
+            result,
+            profile_id,
+            instance_id,
+            run_page=run_page,
+            run_page_size=run_page_size,
+            outbox_page=outbox_page,
+            outbox_page_size=outbox_page_size,
+        )
         return result
 
     @staticmethod
@@ -73,8 +95,13 @@ class TimelineAdminController:
                 "internal_memo": 0,
                 "latest_at": None,
             },
-            "message_pagination": {"page": 1, "page_size": 20, "total_pages": 1},
+            "message_pagination": _pagination(1, 20, 0),
+            "intent_pagination": _pagination(1, 20, 0),
+            "run_pagination": _pagination(1, 20, 0),
+            "outbox_pagination": _pagination(1, 20, 0),
+            "character_intent_stats": {"total": 0, "active": 0},
             "outbox": [],
+            "outbox_stats": {"total": 0, "pending": 0, "failed": 0, "cancelled": 0},
             "wakeups": [],
             "contact_clock": {},
             "delivery_capability": {},
@@ -85,7 +112,13 @@ class TimelineAdminController:
         }
 
     async def _add_state_views(
-        self, result: dict[str, Any], profile_id: str, instance_id: str
+        self,
+        result: dict[str, Any],
+        profile_id: str,
+        instance_id: str,
+        *,
+        intent_page: int,
+        intent_page_size: int,
     ) -> None:
         state = await self.profiles_repository.get_instance_state(profile_id, instance_id)
         result["state"] = {
@@ -95,10 +128,22 @@ class TimelineAdminController:
             jsonable(await self.timeline_repository.get_contact_state(profile_id, instance_id))
             or {}
         )
-        await self._add_controlled_bridge_views(result, profile_id, instance_id)
+        await self._add_controlled_bridge_views(
+            result,
+            profile_id,
+            instance_id,
+            intent_page=intent_page,
+            intent_page_size=intent_page_size,
+        )
 
     async def _add_controlled_bridge_views(
-        self, result: dict[str, Any], profile_id: str, instance_id: str
+        self,
+        result: dict[str, Any],
+        profile_id: str,
+        instance_id: str,
+        *,
+        intent_page: int,
+        intent_page_size: int,
     ) -> None:
         result["state_message_gate"] = {
             "policy": jsonable(
@@ -108,11 +153,19 @@ class TimelineAdminController:
                 await self.timeline_repository.get_state_gate_snapshot(profile_id, instance_id)
             ),
         }
+        stats = await self.timeline_repository.character_intent_statistics(profile_id, instance_id)
+        size, page = _page(intent_page, intent_page_size, int(stats.get("total") or 0))
+        result["character_intent_stats"] = jsonable(stats)
         result["character_intents"] = jsonable(
             await self.timeline_repository.list_character_intents(
-                profile_id, instance_id, active_only=False, limit=100
+                profile_id,
+                instance_id,
+                active_only=False,
+                limit=size,
+                offset=(page - 1) * size,
             )
         )
+        result["intent_pagination"] = _pagination(page, size, int(stats.get("total") or 0))
 
     async def _add_delivery_views(
         self,
@@ -168,19 +221,48 @@ class TimelineAdminController:
         result["message_pagination"] = {
             "page": page,
             "page_size": size,
+            "page_count": total_pages,
             "total_pages": total_pages,
             "total": total,
+            "has_more": page < total_pages,
         }
 
     async def _add_runtime_lists(
-        self, result: dict[str, Any], profile_id: str, instance_id: str
+        self,
+        result: dict[str, Any],
+        profile_id: str,
+        instance_id: str,
+        *,
+        run_page: int,
+        run_page_size: int,
+        outbox_page: int,
+        outbox_page_size: int,
     ) -> None:
+        run_total = await self.timeline_repository.count_instance_runs(profile_id, instance_id)
+        run_size, run_page = _page(run_page, run_page_size, run_total)
+        outbox_total = await self.delivery_repository.count_instance_outbox(profile_id, instance_id)
+        result["outbox_stats"] = jsonable(
+            await self.delivery_repository.instance_outbox_statistics(profile_id, instance_id)
+        )
+        outbox_size, outbox_page = _page(outbox_page, outbox_page_size, outbox_total)
         result["runs"] = jsonable(
-            await self.timeline_repository.list_instance_runs(profile_id, instance_id, limit=20)
+            await self.timeline_repository.list_instance_runs(
+                profile_id,
+                instance_id,
+                limit=run_size,
+                offset=(run_page - 1) * run_size,
+            )
         )
         result["outbox"] = jsonable(
-            await self.delivery_repository.list_instance_outbox(profile_id, instance_id, limit=20)
+            await self.delivery_repository.list_instance_outbox(
+                profile_id,
+                instance_id,
+                limit=outbox_size,
+                offset=(outbox_page - 1) * outbox_size,
+            )
         )
+        result["run_pagination"] = _pagination(run_page, run_size, run_total)
+        result["outbox_pagination"] = _pagination(outbox_page, outbox_size, outbox_total)
         result["wakeups"] = jsonable(
             await self.timeline_repository.list_instance_wakeups(profile_id, instance_id, limit=20)
         )
@@ -209,14 +291,92 @@ class TimelineAdminController:
             await self.runner.outbox.list_retraction_actions(profile_id, instance_id, limit=100)
         )
 
-    async def controlled_bridge_snapshot(self, profile_id: str, instance_id: str) -> dict[str, Any]:
+    async def delivery_problem_count(
+        self,
+        profile_id: str,
+        instance_id: str,
+        acknowledged_occurrences: tuple[str, ...],
+    ) -> int:
+        """Count every unacknowledged failed delivery, not only the visible page."""
+
+        return int(
+            (
+                await self.delivery_attention_summary(
+                    profile_id,
+                    instance_id,
+                    acknowledged_occurrences,
+                )
+            )["count"]
+        )
+
+    async def delivery_attention_summary(
+        self,
+        profile_id: str,
+        instance_id: str,
+        acknowledged_occurrences: tuple[str, ...] | frozenset[str],
+    ) -> dict[str, Any]:
+        """Return an exact count and newest visible failure across the full archive."""
+
+        failed_total = await self.delivery_repository.count_instance_outbox(
+            profile_id,
+            instance_id,
+            status=OutboxStatus.FAILED,
+        )
+        acknowledged = frozenset(str(value) for value in acknowledged_occurrences)
+        if failed_total <= 0:
+            return {"count": 0, "latest": None}
+        matched: set[str] = set()
+        latest: dict[str, Any] | None = None
+        offset = 0
+        batch_size = 200
+        while offset < failed_total:
+            batch = await self.delivery_repository.list_instance_outbox(
+                profile_id,
+                instance_id,
+                status=OutboxStatus.FAILED,
+                limit=batch_size,
+                offset=offset,
+            )
+            if not batch:
+                break
+            for item in batch:
+                row = jsonable(item) or {}
+                occurrence_id = delivery_failure_occurrence_id(row)
+                if occurrence_id in acknowledged:
+                    matched.add(occurrence_id)
+                elif latest is None:
+                    latest = row
+            offset += len(batch)
+            if latest is not None and len(matched) == len(acknowledged):
+                break
+            if len(batch) < batch_size:
+                break
+        return {
+            "count": max(0, failed_total - len(matched)),
+            "latest": latest,
+        }
+
+    async def controlled_bridge_snapshot(
+        self,
+        profile_id: str,
+        instance_id: str,
+        *,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> dict[str, Any]:
         """Return the bounded phase-2 admin view for one isolated instance."""
         assert self.timeline_repository is not None
         await self.profiles.require_role_instance(profile_id, instance_id)
         policy = await self.timeline_repository.resolve_state_gate_policy(profile_id, instance_id)
         gate = await self.timeline_repository.get_state_gate_snapshot(profile_id, instance_id)
+        stats = await self.timeline_repository.character_intent_statistics(profile_id, instance_id)
+        size, page = _page(page, page_size, int(stats.get("total") or 0))
         intents = await self.timeline_repository.list_character_intents(
-            profile_id, instance_id, active_only=False, limit=100
+            profile_id,
+            instance_id,
+            active_only=False,
+            limit=size,
+            offset=(page - 1) * size,
         )
         return {
             "profile_id": profile_id,
@@ -226,6 +386,8 @@ class TimelineAdminController:
                 "snapshot": jsonable(gate),
             },
             "character_intents": jsonable(intents),
+            "character_intent_stats": jsonable(stats),
+            "pagination": _pagination(page, size, int(stats.get("total") or 0)),
             "limits": {"active_character_intents": 32},
         }
 
@@ -413,7 +575,7 @@ class TimelineAdminController:
             )
             if provider_limit is None:
                 diagnostics["provider_warning"] = (
-                    "Provider上下文窗口未知，当前按用户MaxToken执行保守预算。"
+                    "模型配置缺少总上下文容量，当前无法校验实际服务边界。"
                 )
         except Exception as exc:
             diagnostics["provider_warning"] = f"{type(exc).__name__}: {exc}"
@@ -499,3 +661,21 @@ class TimelineAdminController:
             "report": jsonable(prepared.compiled.report),
             "selected_context_count": len(prepared.compiled.items),
         }
+
+
+def _page(requested_page: int, requested_size: int, total: int) -> tuple[int, int]:
+    size = max(5, min(int(requested_size), 100))
+    page_count = max(1, (total + size - 1) // size)
+    return size, max(1, min(int(requested_page), page_count))
+
+
+def _pagination(page: int, page_size: int, total: int) -> dict[str, int | bool]:
+    page_count = max(1, (total + page_size - 1) // page_size)
+    return {
+        "page": page,
+        "page_size": page_size,
+        "page_count": page_count,
+        "total_pages": page_count,
+        "total": total,
+        "has_more": page < page_count,
+    }

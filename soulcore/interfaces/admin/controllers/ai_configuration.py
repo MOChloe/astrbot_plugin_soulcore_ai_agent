@@ -8,7 +8,6 @@ from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 from ....features.ai.model_parameters import (
-    DEFAULT_MODEL_MAX_CONTEXT_TOKENS,
     MINIMUM_MODEL_MAX_CONTEXT_TOKENS,
     TEXT_GENERATION_CAPABILITIES,
     normalize_model_custom_request_parameters,
@@ -302,7 +301,7 @@ class AIConfigurationController:
             }
         return {
             "max_context_tokens": (
-                int(config.get("max_context_tokens") or DEFAULT_MODEL_MAX_CONTEXT_TOKENS)
+                AIConfigurationController._configured_context_limit(config)
                 if text_capable
                 else None
             ),
@@ -677,11 +676,12 @@ class AIConfigurationController:
             "ANTHROPIC",
         }:
             raise ValueError("当前 API 服务类型不支持这些文字生成参数")
-        if str(package.get("protocol") or "").upper() == "ANTHROPIC":
-            if "max_completion_tokens" in parameters:
-                raise ValueError("Anthropic 原生协议只接受 max_tokens")
-            if str(parameters.get("reasoning_effort") or "").lower() == "minimal":
-                raise ValueError("Anthropic 原生协议不支持 minimal effort")
+        protocol = str(package.get("protocol") or "").upper()
+        if (
+            protocol == "ANTHROPIC"
+            and str(parameters.get("reasoning_effort") or "").lower() == "minimal"
+        ):
+            raise ValueError("Anthropic 原生协议不支持 minimal effort")
         return parameters
 
     @staticmethod
@@ -720,14 +720,25 @@ class AIConfigurationController:
         if raw_limit in (None, ""):
             raw_limit = config.get("max_context_tokens")
         if raw_limit in (None, ""):
-            raw_limit = DEFAULT_MODEL_MAX_CONTEXT_TOKENS
+            raise ValueError("请按服务商模型文档填写模型总上下文容量")
         raw_limit_text = str(raw_limit).strip()
         if not raw_limit_text.isascii() or not raw_limit_text.isdigit():
-            raise ValueError("模型最大 Token 必须是正整数")
+            raise ValueError("模型总上下文容量必须是正整数")
         max_context_tokens = int(raw_limit_text)
         if max_context_tokens < MINIMUM_MODEL_MAX_CONTEXT_TOKENS:
-            raise ValueError("文字与视觉模型的最大 Token 不能低于 128000")
+            raise ValueError("模型总上下文容量必须至少能容纳一个输入 Token 和一个输出 Token")
         return min(max_context_tokens, 10_000_000)
+
+    @staticmethod
+    def _configured_context_limit(config: Mapping[str, Any]) -> int | None:
+        raw_limit = config.get("max_context_tokens")
+        if raw_limit in (None, "") or isinstance(raw_limit, bool):
+            return None
+        try:
+            value = int(raw_limit)
+        except (TypeError, ValueError):
+            return None
+        return value if value >= MINIMUM_MODEL_MAX_CONTEXT_TOKENS else None
 
     @staticmethod
     def _image_generation_mode(payload: Mapping[str, Any], config: Mapping[str, Any]) -> str:

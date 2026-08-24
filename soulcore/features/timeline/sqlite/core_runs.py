@@ -136,15 +136,28 @@ class CoreRunRecords:
         return int(row["workflow_id"])
 
     async def list_instance_runs(
-        self, profile_id: str, instance_id: str, limit: int = 20
+        self,
+        profile_id: str,
+        instance_id: str,
+        limit: int = 20,
+        *,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
         rows = await self.db.fetch_all(
             """SELECT * FROM instance_core_runs
             WHERE profile_id = ? AND instance_id = ?
-            ORDER BY run_id DESC LIMIT ?""",
-            (profile_id, instance_id, limit),
+            ORDER BY run_id DESC LIMIT ? OFFSET ?""",
+            (profile_id, instance_id, max(1, int(limit)), max(0, int(offset))),
         )
         return [self._record(row, json_columns=("request_json", "decision_json")) for row in rows]
+
+    async def count_instance_runs(self, profile_id: str, instance_id: str) -> int:
+        row = await self.db.fetch_one(
+            """SELECT COUNT(*) AS total FROM instance_core_runs
+            WHERE profile_id = ? AND instance_id = ?""",
+            (profile_id, instance_id),
+        )
+        return int(row["total"] if row is not None else 0)
 
     async def get_previous_instance_run_context_message_ids(
         self,

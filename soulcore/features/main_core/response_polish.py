@@ -741,12 +741,16 @@ def _reject_reference_copy(
 
 
 def _context_limit(role: ScopeConfig, backend_hint: AIBackendDescriptor) -> int:
+    del role
     metadata = dict(backend_hint.metadata)
-    raw = metadata.get("max_context_tokens") or role.max_context_tokens
+    raw = metadata.get("max_context_tokens")
     try:
-        return max(1, int(raw))
+        value = int(raw)
     except (TypeError, ValueError):
-        return 128000
+        value = 0
+    if value < 2:
+        raise ResponsePolishContractError("model_context_capacity_missing")
+    return value
 
 
 __all__ = [

@@ -20,7 +20,7 @@ from .player_output import PlayerOutputProjector
 from .player_views import player_history_record_ref
 from .presentation import jsonable
 
-_MAX_LINK_ROWS = 10_000
+_LINK_PAGE_SIZE = 1_000
 _MESSAGE_PAGE_SIZE = 1_000
 
 
@@ -70,6 +70,8 @@ class PlayerHistoryController:
             for record in records
         ]
         all_records.sort(key=lambda item: self._time_key(item[0].occurred_at), reverse=True)
+        page_count = max(1, (len(all_records) + bounded_size - 1) // bounded_size)
+        bounded_page = min(bounded_page, page_count)
         start = (bounded_page - 1) * bounded_size
         selected = all_records[start : start + bounded_size]
         thought_by_workflow = await self._thought_availability(
@@ -177,10 +179,8 @@ class PlayerHistoryController:
         instance_id = str(contact.get("instance_id") or "")
         messages, runs, delivery_links = await asyncio.gather(
             self._visible_messages(profile_id, instance_id),
-            self.timeline.list_instance_runs(profile_id, instance_id, limit=_MAX_LINK_ROWS),
-            self.delivery.list_instance_player_history_links(
-                profile_id, instance_id, limit=_MAX_LINK_ROWS
-            ),
+            self._all_runs(profile_id, instance_id),
+            self._all_delivery_links(profile_id, instance_id),
         )
         by_id = {int(item.message_id): item for item in messages}
         candidates = self._run_candidates(
@@ -194,6 +194,39 @@ class PlayerHistoryController:
         result.extend(self._standalone_records(profile_id, instance_id, messages, claimed))
         result.sort(key=lambda item: self._time_key(item.occurred_at), reverse=True)
         return result
+
+    async def _all_runs(self, profile_id: str, instance_id: str) -> list[Mapping[str, Any]]:
+        return await self._paged_rows(
+            lambda offset: self.timeline.list_instance_runs(
+                profile_id,
+                instance_id,
+                limit=_LINK_PAGE_SIZE,
+                offset=offset,
+            )
+        )
+
+    async def _all_delivery_links(
+        self, profile_id: str, instance_id: str
+    ) -> list[Mapping[str, Any]]:
+        return await self._paged_rows(
+            lambda offset: self.delivery.list_instance_player_history_links(
+                profile_id,
+                instance_id,
+                limit=_LINK_PAGE_SIZE,
+                offset=offset,
+            )
+        )
+
+    @staticmethod
+    async def _paged_rows(load: Any) -> list[Mapping[str, Any]]:
+        result: list[Mapping[str, Any]] = []
+        offset = 0
+        while True:
+            page = list(await load(offset))
+            result.extend(page)
+            if len(page) < _LINK_PAGE_SIZE:
+                return result
+            offset += len(page)
 
     def _run_candidates(
         self,

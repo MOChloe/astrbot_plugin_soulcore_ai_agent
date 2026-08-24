@@ -371,14 +371,13 @@ class AIAdminController:
         return wanted in declared
 
     async def ai_manager_snapshot(self, profile_id: str) -> dict[str, Any]:
-        tasks = await self.repository.list_ai_tasks(profile_id=profile_id, limit=1000)
-        counts, errors = self._task_counts(tasks)
+        total, failed_24h, counts, errors = await self._task_statistics(profile_id)
         await self._add_invocation_errors(profile_id, errors)
         pauses = await self.repository.list_ai_manager_pauses()
         backends = await self._backend_views(pauses)
         pools = await self._capability_views()
         return {
-            "overview": self._overview(tasks, counts, pauses),
+            "overview": self._overview(total, failed_24h, counts, pauses),
             "backends": backends,
             "capability_pools": pools,
             "pauses": jsonable(pauses),
@@ -388,6 +387,33 @@ class AIAdminController:
             ],
             "capability_options": list(AI_CAPABILITIES),
         }
+
+    async def _task_statistics(
+        self, profile_id: str
+    ) -> tuple[int, int, dict[str, int], dict[str, int]]:
+        total = 0
+        failed_24h = 0
+        counts: dict[str, int] = {}
+        errors: dict[str, int] = {}
+        offset = 0
+        now = datetime.now().astimezone()
+        while True:
+            tasks = await self.repository.list_ai_tasks(
+                profile_id=profile_id,
+                limit=1000,
+                offset=offset,
+            )
+            page_counts, page_errors = self._task_counts(tasks)
+            total += len(tasks)
+            failed_24h += sum(1 for task in tasks if self._failed_recently(task, now))
+            for key, value in page_counts.items():
+                counts[key] = counts.get(key, 0) + value
+            for key, value in page_errors.items():
+                errors[key] = errors.get(key, 0) + value
+            if len(tasks) < 1000:
+                break
+            offset += len(tasks)
+        return total, failed_24h, counts, errors
 
     @staticmethod
     def _task_counts(tasks: list[Mapping[str, Any]]) -> tuple[dict[str, int], dict[str, int]]:
@@ -402,12 +428,30 @@ class AIAdminController:
         return counts, errors
 
     async def _add_invocation_errors(self, profile_id: str, errors: dict[str, int]) -> None:
-        for workflow in await self.repository.list_ai_workflow_summaries(
-            profile_id=profile_id, limit=100
-        ):
-            code = str(workflow.get("final_error_code") or "").strip()
-            if code:
-                errors[code] = errors.get(code, 0) + 1
+        cursor_started_at = ""
+        cursor_workflow_id = 0
+        while True:
+            rows = await self.repository.list_ai_workflow_summaries(
+                profile_id=profile_id,
+                cursor_started_at=cursor_started_at,
+                cursor_workflow_id=cursor_workflow_id,
+                limit=100,
+            )
+            page = rows[:100]
+            for workflow in page:
+                code = str(workflow.get("final_error_code") or "").strip()
+                if code:
+                    errors[code] = errors.get(code, 0) + 1
+            if len(rows) <= 100 or not page:
+                break
+            last = page[-1]
+            next_started_at = str(last.get("started_at") or "")
+            next_workflow_id = int(last.get("workflow_id") or 0)
+            if not next_started_at or next_workflow_id < 1:
+                break
+            if (next_started_at, next_workflow_id) == (cursor_started_at, cursor_workflow_id):
+                break
+            cursor_started_at, cursor_workflow_id = next_started_at, next_workflow_id
 
     async def _backend_views(self, pauses: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
         paused = {
@@ -481,14 +525,13 @@ class AIAdminController:
 
     @staticmethod
     def _overview(
-        tasks: list[Mapping[str, Any]],
+        total: int,
+        failed_24h: int,
         counts: Mapping[str, int],
         pauses: list[Mapping[str, Any]],
     ) -> dict[str, Any]:
-        now = datetime.now().astimezone()
-        failed_24h = sum(1 for task in tasks if AIAdminController._failed_recently(task, now))
         return {
-            "total": len(tasks),
+            "total": max(0, int(total)),
             "running": counts.get("RUNNING", 0),
             "queued": sum(counts.get(item, 0) for item in ("READY", "SCHEDULED", "RETRY_WAIT")),
             "pending": counts.get("READY", 0) + counts.get("SCHEDULED", 0),

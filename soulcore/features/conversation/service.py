@@ -205,8 +205,8 @@ class ConversationContextService(
                 int(role.target_context_tokens),
             ).normalized()
         return ContextBudgetConfig(
-            int(role.max_context_tokens),
-            int(role.target_context_tokens),
+            int(thinking_policy.max_context_tokens),
+            int(thinking_policy.target_context_tokens),
             thinking_policy.fill_ratio,
         ).normalized()
 

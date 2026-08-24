@@ -25,11 +25,34 @@ class KnowledgeAdminController:
         self.recall = recall
         self.identity = identity
 
-    async def knowledge_snapshot(self, profile_id: str, instance_id: str) -> dict[str, Any]:
+    async def knowledge_snapshot(
+        self,
+        profile_id: str,
+        instance_id: str,
+        *,
+        memory_page: int = 1,
+        world_info_page: int = 1,
+        page_size: int = 1000,
+    ) -> dict[str, Any]:
         """Return one instance-scoped administrator knowledge snapshot."""
 
-        memories = await self.repository.list_memories(profile_id, instance_id, limit=1000)
-        world_info = await self.repository.list_knowledge_facts(profile_id, instance_id, limit=1000)
+        size = max(1, min(int(page_size), 1000))
+        memory_total = await self.repository.count_memories(profile_id, instance_id)
+        world_info_total = await self.repository.count_knowledge_facts(profile_id, instance_id)
+        memory_page = _bounded_page(memory_page, size, memory_total)
+        world_info_page = _bounded_page(world_info_page, size, world_info_total)
+        memories = await self.repository.list_memories(
+            profile_id,
+            instance_id,
+            limit=size,
+            offset=(memory_page - 1) * size,
+        )
+        world_info = await self.repository.list_knowledge_facts(
+            profile_id,
+            instance_id,
+            limit=size,
+            offset=(world_info_page - 1) * size,
+        )
         result = {
             "ok": True,
             "available": True,
@@ -38,6 +61,10 @@ class KnowledgeAdminController:
             "status": jsonable(await self.repository.get_knowledge_status(profile_id, instance_id)),
             "memories": jsonable(memories),
             "world_info": jsonable([self._world_info_view(item) for item in world_info]),
+            "pagination": {
+                "memories": _pagination(memory_page, size, memory_total),
+                "world_info": _pagination(world_info_page, size, world_info_total),
+            },
             "batches": jsonable(
                 await self.repository.list_knowledge_batches(profile_id, instance_id, limit=20)
             ),
@@ -69,7 +96,7 @@ class KnowledgeAdminController:
     async def knowledge_support_snapshot(self, profile_id: str, instance_id: str) -> dict[str, Any]:
         """Return knowledge diagnostics without private content or evidence."""
 
-        snapshot = await self.knowledge_snapshot(profile_id, instance_id)
+        snapshot = await self.knowledge_snapshot(profile_id, instance_id, page_size=1000)
         if snapshot.get("unavailable"):
             return snapshot
         memories = list(snapshot.get("memories") or [])
@@ -79,8 +106,12 @@ class KnowledgeAdminController:
             "available": True,
             "redacted": True,
             "status": self._safe_status(snapshot.get("status")),
-            "memory_count": len(memories),
-            "world_info_count": len(world_info),
+            "memory_count": int(
+                snapshot.get("pagination", {}).get("memories", {}).get("total") or 0
+            ),
+            "world_info_count": int(
+                snapshot.get("pagination", {}).get("world_info", {}).get("total") or 0
+            ),
             "memories": [self._memory_meta(row) for row in memories],
             "world_info": [self._knowledge_fact_meta(row) for row in world_info],
             "batches": self._safe_batches(snapshot.get("batches")),
@@ -591,3 +622,17 @@ class KnowledgeAdminController:
         if "knowledge_fact_revision_id" in result:
             result["world_info_revision_id"] = result.pop("knowledge_fact_revision_id")
         return result
+
+
+def _bounded_page(page: int, page_size: int, total: int) -> int:
+    return max(1, min(int(page), max(1, (total + page_size - 1) // page_size)))
+
+
+def _pagination(page: int, page_size: int, total: int) -> dict[str, int | bool]:
+    return {
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "page_count": max(1, (total + page_size - 1) // page_size),
+        "has_more": page * page_size < total,
+    }

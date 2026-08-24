@@ -208,6 +208,7 @@ def player_world_view(snapshot: Mapping[str, Any]) -> dict[str, Any]:
         "world_texture": _text(definition.get("world_texture")),
         "expansion_policy": _text(definition.get("expansion_policy")) or "OPEN",
         "boundaries": boundaries,
+        "boundary_pagination": _mapping(_mapping(snapshot.get("pagination")).get("boundaries")),
     }
 
 

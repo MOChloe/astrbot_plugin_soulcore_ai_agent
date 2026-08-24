@@ -94,26 +94,17 @@ def readiness_view(
 ) -> dict[str, Any]:
     """Explain whether the selected profile can run the main conversation path."""
 
+    del thinking
     main = _mapping(main_config)
     all_chat_models = _ready_chat_models(ai_packages)
-    required_context_tokens = int((thinking or {}).get("max_context_tokens") or 0)
-    recommended_models = [
-        model
-        for model in all_chat_models
-        if int(model.get("max_context_tokens") or 0) >= required_context_tokens
-    ]
     model_ready = bool(all_chat_models)
     enabled = bool(main.get("enabled"))
     checks = _readiness_checks(
         model_count=len(all_chat_models),
-        recommended_model_count=len(recommended_models),
-        minimum_context_tokens=required_context_tokens,
         enabled=enabled,
     )
     issues = _readiness_issues(
         model_ready=model_ready,
-        recommended_model_count=len(recommended_models),
-        minimum_context_tokens=required_context_tokens,
         enabled=enabled,
     )
     ready = model_ready and enabled
@@ -138,7 +129,11 @@ def _ready_chat_models(ai_packages: Mapping[str, Any]) -> list[dict[str, Any]]:
             continue
         for model in _sequence(package.get("models")):
             capabilities = _string_set(model.get("capabilities"))
-            if bool(model.get("enabled", True)) and "chat.completion" in capabilities:
+            if (
+                bool(model.get("enabled", True))
+                and "chat.completion" in capabilities
+                and _nonnegative_int(model.get("max_context_tokens")) >= 2
+            ):
                 result.append(model)
     return result
 
@@ -146,8 +141,6 @@ def _ready_chat_models(ai_packages: Mapping[str, Any]) -> list[dict[str, Any]]:
 def _readiness_checks(
     *,
     model_count: int,
-    recommended_model_count: int,
-    minimum_context_tokens: int,
     enabled: bool,
 ) -> list[dict[str, Any]]:
     return [
@@ -163,11 +156,9 @@ def _readiness_checks(
             "title": "主对话模型",
             "ready": model_count > 0,
             "summary": (
-                f"已有 {model_count} 个可用模型；当前上下文设置为 {minimum_context_tokens:,} tokens"
-                if model_count and not recommended_model_count and minimum_context_tokens
-                else f"已有 {model_count} 个可用模型"
+                f"已有 {model_count} 个已声明真实容量的可用模型"
                 if model_count
-                else "还没有可用且已配置密钥的主对话模型"
+                else "还没有已填写真实容量、可用且已配置密钥的主对话模型"
             ),
             "target": "settings-models",
         },
@@ -184,8 +175,6 @@ def _readiness_checks(
 def _readiness_issues(
     *,
     model_ready: bool,
-    recommended_model_count: int,
-    minimum_context_tokens: int,
     enabled: bool,
 ) -> list[dict[str, Any]]:
     issues = []
@@ -195,24 +184,9 @@ def _readiness_issues(
                 code="main_model_unavailable",
                 severity="blocked",
                 title="主对话模型尚不可用",
-                summary="需要一个启用、已配置密钥且承担“主对话”用途的模型。",
+                summary="需要一个填写真实总上下文容量、启用、已配置密钥且承担“主对话”用途的模型。",
                 impact="收到消息后无法生成角色回复。",
                 action_label="配置主对话模型",
-                action_target="settings-models",
-            )
-        )
-    elif not recommended_model_count and minimum_context_tokens:
-        issues.append(
-            issue_view(
-                code="main_model_context_window_below_recommended",
-                severity="warning",
-                title="复杂轮次的上下文余量较小",
-                summary=(
-                    f"当前上下文配置为 {minimum_context_tokens:,} tokens，模型上限低于该值；"
-                    "普通对话仍可运行。"
-                ),
-                impact="上下文特别长或行动轮次很多时，可能提前裁剪或因必要内容放不下而失败。",
-                action_label="检查模型上限",
                 action_target="settings-models",
             )
         )
@@ -264,6 +238,9 @@ def instance_workspace_view(
         ),
         "pagination": {
             "messages": jsonable(_mapping(snapshot.get("message_pagination"))),
+            "intents": jsonable(_mapping(snapshot.get("intent_pagination"))),
+            "runs": jsonable(_mapping(snapshot.get("run_pagination"))),
+            "outbox": jsonable(_mapping(snapshot.get("outbox_pagination"))),
         },
     }
 
@@ -275,18 +252,30 @@ def _instance_summary(
 ) -> dict[str, Any]:
     state = _mapping(snapshot.get("state"))
     outbox = _sequence(snapshot.get("outbox"))
+    outbox_stats = _mapping(snapshot.get("outbox_stats"))
     next_clock = contact_clock
     return {
         "current_state": str(
             state.get("current_state") or state.get("state_summary") or "尚无当前状态"
         ),
         "message_count": int(_mapping(snapshot.get("message_stats")).get("total") or 0),
-        "active_intent_count": _active_intent_count(snapshot.get("character_intents")),
-        "pending_delivery_count": _pending_delivery_count(outbox),
-        "delivery_problem_count": sum(
-            1
-            for item in outbox
-            if _outbox_view(item, acknowledged_failures=acknowledged)["requires_attention"]
+        "active_intent_count": int(
+            _mapping(snapshot.get("character_intent_stats")).get("active")
+            or _active_intent_count(snapshot.get("character_intents"))
+        ),
+        "pending_delivery_count": int(
+            outbox_stats.get("pending")
+            if "pending" in outbox_stats
+            else _pending_delivery_count(outbox)
+        ),
+        "delivery_problem_count": int(
+            snapshot.get("delivery_problem_count")
+            if "delivery_problem_count" in snapshot
+            else sum(
+                1
+                for item in outbox
+                if _outbox_view(item, acknowledged_failures=acknowledged)["requires_attention"]
+            )
         ),
         "next_wakeup_at": next_clock.get("next_check_at"),
         "next_wakeup_overdue": bool(next_clock.get("overdue")),
@@ -362,6 +351,15 @@ def knowledge_workspace_view(snapshot: Mapping[str, Any]) -> dict[str, Any]:
             )
             for item in _sequence(snapshot.get("world_info"))
         ],
+        "pagination": {
+            key: {
+                field: int(value or 0) if field != "has_more" else bool(value)
+                for field, value in _mapping(page).items()
+                if field in {"page", "page_size", "page_count", "total", "has_more"}
+            }
+            for key, page in _mapping(snapshot.get("pagination")).items()
+            if key in {"memories", "world_info"}
+        },
     }
 
 
@@ -411,6 +409,7 @@ def image_library_view(snapshot: Mapping[str, Any]) -> dict[str, Any]:
             "total": int(_mapping(snapshot.get("counts")).get("total") or 0),
             "available": int(_mapping(snapshot.get("counts")).get("available") or 0),
         },
+        "pagination": _pagination_view(snapshot.get("pagination")),
     }
 
 
@@ -436,6 +435,7 @@ def file_library_view(snapshot: Mapping[str, Any]) -> dict[str, Any]:
             for key, value in _mapping(snapshot.get("summary")).items()
             if key in {"total", "available", "pending_delivery", "released"}
         },
+        "pagination": _pagination_view(snapshot.get("pagination")),
     }
 
 
@@ -455,6 +455,7 @@ def sticker_library_view(snapshot: Mapping[str, Any]) -> dict[str, Any]:
                     meta=_sticker_meta(item),
                 ),
                 "thumbnail_data_url": _sticker_thumbnail_data_url(item),
+                "shared_with_scope": str(item.get("library_kind") or "").upper() == "CORE",
             }
             for item in _sequence(snapshot.get("items"))
         ],
@@ -463,6 +464,14 @@ def sticker_library_view(snapshot: Mapping[str, Any]) -> dict[str, Any]:
             for key, value in _mapping(snapshot.get("pagination")).items()
             if key in {"page", "page_size", "page_count", "total"}
         },
+    }
+
+
+def _pagination_view(value: Any) -> dict[str, int | bool]:
+    return {
+        key: bool(raw) if key == "has_more" else int(raw or 0)
+        for key, raw in _mapping(value).items()
+        if key in {"page", "page_size", "page_count", "total", "has_more"}
     }
 
 

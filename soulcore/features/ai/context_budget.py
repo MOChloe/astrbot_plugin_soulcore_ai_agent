@@ -8,8 +8,10 @@ from typing import Any
 
 from ...contracts.ai_models import AIBackendDescriptor, AIModelRequest
 from ...shared.token_meter import ConservativeTokenMeter
+from .model_parameters import normalize_model_generation_parameters
 
-DEFAULT_RESERVED_OUTPUT_TOKENS = 8192
+DEFAULT_INTERNAL_OUTPUT_TOKENS = 8192
+MINIMUM_RESPONSE_HEADROOM_TOKENS = 1
 IMAGE_INPUT_TOKENS = 1024
 
 
@@ -34,13 +36,27 @@ def configured_model_context_tokens(descriptor: AIBackendDescriptor | None) -> i
     return value if value > 0 else None
 
 
+def configured_model_generation_parameters(
+    descriptor: AIBackendDescriptor | None,
+) -> Mapping[str, Any]:
+    """Return the selected model's normalized request-budget controls."""
+
+    if descriptor is None:
+        return {}
+    value = descriptor.metadata.get("generation_parameters")
+    return normalize_model_generation_parameters(value if isinstance(value, Mapping) else {})
+
+
 def reserved_output_tokens(
     parameters: Mapping[str, Any] | None,
     *,
-    default: int = DEFAULT_RESERVED_OUTPUT_TOKENS,
+    default: int = MINIMUM_RESPONSE_HEADROOM_TOKENS,
 ) -> int:
     values = dict(parameters or {})
-    raw = values.get("max_completion_tokens", values.get("max_tokens", default))
+    raw = values.get(
+        "max_output_tokens",
+        values.get("max_completion_tokens", values.get("max_tokens", default)),
+    )
     try:
         return max(1, int(raw))
     except (TypeError, ValueError):
@@ -92,11 +108,13 @@ def available_prompt_tokens(
 
 
 __all__ = [
-    "DEFAULT_RESERVED_OUTPUT_TOKENS",
+    "DEFAULT_INTERNAL_OUTPUT_TOKENS",
     "IMAGE_INPUT_TOKENS",
+    "MINIMUM_RESPONSE_HEADROOM_TOKENS",
     "ModelContextRequirement",
     "available_prompt_tokens",
     "configured_model_context_tokens",
+    "configured_model_generation_parameters",
     "estimate_model_context_requirement",
     "measure_model_request_context",
     "reserved_output_tokens",

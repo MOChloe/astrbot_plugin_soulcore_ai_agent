@@ -41,22 +41,35 @@ class MediaAdminController:
         self.file_artifacts = file_artifacts
         self.media_storage = media_storage
 
-    async def image_snapshot(self, profile_id: str, instance_id: str) -> dict[str, Any]:
+    async def image_snapshot(
+        self,
+        profile_id: str,
+        instance_id: str,
+        *,
+        page: int = 1,
+        page_size: int = 100,
+    ) -> dict[str, Any]:
         assert self.media_repository is not None
+        size = max(1, min(int(page_size), 100))
+        statistics = await self.media_repository.media_asset_statistics(
+            profile_id, instance_id, mime_prefix="image/"
+        )
+        total = int(statistics["total"])
+        page = _bounded_page(page, size, total)
         assets = await self.media_repository.list_media_assets(
-            profile_id, instance_id, mime_prefix="image/", limit=100
+            profile_id,
+            instance_id,
+            mime_prefix="image/",
+            limit=size,
+            offset=(page - 1) * size,
         )
         cleanup = await self.media_repository.list_media_cleanup_events(
             profile_id, instance_id, limit=100
-        )
-        statistics = await self.media_repository.media_asset_statistics(
-            profile_id, instance_id, mime_prefix="image/"
         )
         counts = dict(statistics["file_status"])
         inspection = dict(statistics["inspection_status"])
         available_count = int(counts.get("AVAILABLE", 0))
         pending = sum(inspection.get(value, 0) for value in ("PENDING", "RUNNING"))
-        total = int(statistics["total"])
         unavailable = total - available_count
         serialized_assets = []
         for asset in assets:
@@ -90,6 +103,7 @@ class MediaAdminController:
                 "unavailable": unavailable,
             },
             "assets": serialized_assets,
+            "pagination": _pagination(page, size, total),
             "cleanup_events": jsonable(cleanup),
         }
 
@@ -155,10 +169,24 @@ class MediaAdminController:
         token = re.sub(r"[^A-Za-z0-9_-]+", "", str(asset.asset_id or ""))[-12:] or "asset"
         return f"soulcore-image-{stamp}-{token}{extension}"
 
-    async def file_artifact_snapshot(self, profile_id: str, instance_id: str) -> dict[str, Any]:
+    async def file_artifact_snapshot(
+        self,
+        profile_id: str,
+        instance_id: str,
+        *,
+        page: int = 1,
+        page_size: int = 200,
+    ) -> dict[str, Any]:
         assert self.files_repository is not None
+        size = max(1, min(int(page_size), 500))
+        summary = await self.files_repository.file_artifact_statistics(profile_id, instance_id)
+        total = int(summary.get("total") or 0)
+        page = _bounded_page(page, size, total)
         records = await self.files_repository.list_file_artifact_records(
-            profile_id, instance_id, limit=200
+            profile_id,
+            instance_id,
+            limit=size,
+            offset=(page - 1) * size,
         )
         public_records = []
         for record in records:
@@ -168,22 +196,9 @@ class MediaAdminController:
         return {
             "profile_id": profile_id,
             "instance_id": instance_id,
-            "summary": {
-                "total": len(records),
-                "available": sum(
-                    1 for item in records if str(item.get("file_status") or "") == "AVAILABLE"
-                ),
-                "pending_delivery": sum(
-                    1
-                    for item in records
-                    if str(item.get("todo_status") or "")
-                    in {"PENDING", "SELECTED", "DELIVERY_PENDING"}
-                ),
-                "released": sum(
-                    1 for item in records if str(item.get("file_status") or "") == "RELEASED"
-                ),
-            },
+            "summary": summary,
             "artifacts": public_records,
+            "pagination": _pagination(page, size, total),
         }
 
     async def file_artifact_admin_action(
@@ -237,3 +252,17 @@ class MediaAdminController:
             "deleted": True,
             "message": "未投递文件、关联待办和待发送引用已删除",
         }
+
+
+def _bounded_page(page: int, page_size: int, total: int) -> int:
+    return max(1, min(int(page), max(1, (total + page_size - 1) // page_size)))
+
+
+def _pagination(page: int, page_size: int, total: int) -> dict[str, int | bool]:
+    return {
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "page_count": max(1, (total + page_size - 1) // page_size),
+        "has_more": page * page_size < total,
+    }

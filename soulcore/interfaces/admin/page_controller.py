@@ -200,14 +200,26 @@ class LibraryPageActionsMixin:
         instance = await self._instance(profile_id, scope, payload)
         instance_id = instance["instance_id"]
         if action == "image_snapshot":
-            return image_library_view(await self.media.image_snapshot(profile_id, instance_id))
+            return image_library_view(
+                await self.media.image_snapshot(
+                    profile_id,
+                    instance_id,
+                    page=max(1, int(payload.get("page") or 1)),
+                    page_size=max(1, min(int(payload.get("page_size") or 24), 100)),
+                )
+            )
         if action == "image_preview":
             return await self.media.image_preview(
                 profile_id, instance_id, str(payload.get("asset_id") or "")
             )
         if action == "file_artifacts":
             return file_library_view(
-                await self.media.file_artifact_snapshot(profile_id, instance_id)
+                await self.media.file_artifact_snapshot(
+                    profile_id,
+                    instance_id,
+                    page=max(1, int(payload.get("page") or 1)),
+                    page_size=max(1, min(int(payload.get("page_size") or 20), 100)),
+                )
             )
         await self.media.file_artifact_admin_action(profile_id, instance_id, payload)
         return action_result_view("文件操作已经完成")
@@ -218,7 +230,13 @@ class LibraryPageActionsMixin:
         instance_id = instance["instance_id"]
         if action == "knowledge_snapshot":
             return knowledge_workspace_view(
-                await self.knowledge.knowledge_snapshot(profile_id, instance_id)
+                await self.knowledge.knowledge_snapshot(
+                    profile_id,
+                    instance_id,
+                    memory_page=max(1, int(payload.get("memory_page") or 1)),
+                    world_info_page=max(1, int(payload.get("world_info_page") or 1)),
+                    page_size=max(1, min(int(payload.get("page_size") or 20), 100)),
+                )
             )
         if action == "knowledge_form":
             result = await self.knowledge.knowledge_form(
@@ -322,9 +340,15 @@ class SettingsPageActionsMixin:
 
     async def _settings_snapshot_action(self, payload: dict[str, Any]) -> dict[str, Any]:
         profile_id, scope = await self._scope(payload)
-        return await self._settings_snapshot(profile_id, scope)
+        return await self._settings_snapshot(profile_id, scope, world_paging=payload)
 
-    async def _settings_snapshot(self, profile_id: str, scope: str) -> dict[str, Any]:
+    async def _settings_snapshot(
+        self,
+        profile_id: str,
+        scope: str,
+        *,
+        world_paging: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
         main = await self.profiles.main_config_snapshot(profile_id)
         background_life = await self.background.quick_setup_life_snapshot(profile_id)
         character = await self.character_models.snapshot(profile_id)
@@ -337,7 +361,25 @@ class SettingsPageActionsMixin:
         identity_reference = await self.sticker_references.sticker_reference_snapshot(
             profile_id, scope
         )
-        world = await self.background.world_snapshot(profile_id)
+        world = (
+            await self.background.world_snapshot(
+                profile_id,
+                lore_page=1,
+                lore_page_size=1,
+                boundary_page=1,
+                boundary_page_size=1,
+            )
+            if world_paging is None
+            else await self.background.world_snapshot(
+                profile_id,
+                lore_page=max(1, int(world_paging.get("world_lore_page") or 1)),
+                lore_page_size=max(1, min(int(world_paging.get("world_lore_page_size") or 12), 50)),
+                boundary_page=max(1, int(world_paging.get("world_boundary_page") or 1)),
+                boundary_page_size=max(
+                    1, min(int(world_paging.get("world_boundary_page_size") or 12), 50)
+                ),
+            )
+        )
         sections = {
             "main": main,
             "background_life": background_life,
@@ -589,6 +631,7 @@ class BackgroundPageActionsMixin:
     def _background_handlers(self) -> dict[str, Any]:
         return {
             "background_workspace": self._background_workspace,
+            "world_records": self._world_records,
             "background_action": self._background_action,
         }
 
@@ -599,7 +642,24 @@ class BackgroundPageActionsMixin:
 
     async def _background_workspace(self, payload: dict[str, Any]) -> dict[str, Any]:
         profile_id, _, instance_id = await self._background_scope(payload)
-        return await self.background.workspace(profile_id, instance_id)
+        return await self.background.workspace(
+            profile_id,
+            instance_id,
+            story_page=max(1, int(payload.get("story_page") or 1)),
+            story_page_size=max(1, min(int(payload.get("story_page_size") or 10), 50)),
+            timeline_page=max(1, int(payload.get("timeline_page") or 1)),
+            timeline_page_size=max(1, min(int(payload.get("timeline_page_size") or 15), 50)),
+        )
+
+    async def _world_records(self, payload: dict[str, Any]) -> dict[str, Any]:
+        profile_id, _ = await self._scope(payload)
+        return await self.background.world_snapshot(
+            profile_id,
+            lore_page=max(1, int(payload.get("lore_page") or 1)),
+            lore_page_size=max(1, min(int(payload.get("lore_page_size") or 12), 50)),
+            boundary_page=max(1, int(payload.get("boundary_page") or 1)),
+            boundary_page_size=max(1, min(int(payload.get("boundary_page_size") or 12), 50)),
+        )
 
     async def _background_action(self, payload: dict[str, Any]) -> dict[str, Any]:
         action = str(payload.get("action") or "").strip().lower()
@@ -904,13 +964,37 @@ class AdminPageController(
             else _selected_console_profile(profile_rows, payload, preferred)
         )
         scope = _console_scope(payload)
+        requested_contact_ref = str(payload.get("contact_ref") or "").strip()
+        selected_instance_id = ""
+        if selected and requested_contact_ref:
+            direct = await self.profiles_repository.get_character_instance(
+                selected, requested_contact_ref
+            )
+            if direct is not None:
+                selected_instance_id = requested_contact_ref
+                direct_value = jsonable(direct)
+                if isinstance(direct_value, Mapping):
+                    scope = str(direct_value.get("scope") or scope)
+            else:
+                contact = await self._player_contact(selected, payload)
+                selected_instance_id = str(contact["instance_id"])
+                scope = str(contact["scope"])
         if not selected:
             return {
                 "profiles": profile_rows,
                 "selected_profile_id": "",
                 "selected_role_ref": "",
+                "selected_instance_id": "",
+                "selected_contact_ref": "",
                 "scope": scope,
                 "instances": [],
+                "instance_pagination": {
+                    "page": 1,
+                    "page_size": 30,
+                    "page_count": 1,
+                    "total": 0,
+                    "has_more": False,
+                },
                 "advanced_guide": advanced_guide,
                 "readiness": {
                     "ready": False,
@@ -922,13 +1006,24 @@ class AdminPageController(
                 },
             }
         settings = await self._settings_snapshot(selected, scope)
-        instances = await self.profiles.role_instances_snapshot(selected)
+        instances = await self.profiles.role_instances_page(
+            selected,
+            scope,
+            page=max(1, int(payload.get("instance_page") or 1)),
+            page_size=max(5, min(int(payload.get("instance_page_size") or 30), 50)),
+            instance_id=selected_instance_id,
+        )
+        if not selected_instance_id and instances["instances"]:
+            selected_instance_id = str(instances["instances"][0].get("instance_id") or "")
         return {
             "profiles": profile_rows,
             "selected_profile_id": selected,
             "selected_role_ref": player_role_ref(selected),
+            "selected_instance_id": selected_instance_id,
+            "selected_contact_ref": requested_contact_ref,
             "scope": scope,
-            "instances": instances["sections"][scope],
+            "instances": instances["instances"],
+            "instance_pagination": instances["pagination"],
             "advanced_guide": advanced_guide,
             "readiness": settings["readiness"],
         }
@@ -944,6 +1039,11 @@ class AdminPageController(
             await self.profiles_repository.get_console_preference(
                 delivery_failure_preference_key(profile_id, instance_id)
             )
+        )
+        delivery_problem_count = await self.timeline.delivery_problem_count(
+            profile_id,
+            instance_id,
+            acknowledged_delivery_failures,
         )
         context_budget = context_budget_view(
             await self.timeline.context_snapshot(profile_id, scope, instance_id)
@@ -961,6 +1061,7 @@ class AdminPageController(
                     **rendered_detail,
                     "profile": {**rendered_detail.get("profile", {}), **instance},
                     "context_budget": context_budget,
+                    "delivery_problem_count": delivery_problem_count,
                 },
                 acknowledged_delivery_failures=acknowledged_delivery_failures,
             ),
@@ -1173,11 +1274,18 @@ class AdminPageController(
         if action == "save_scope_config":
             return await self.profile_settings.save_scope_configuration(profile_id, scope, payload)
         if action == "instances":
-            snapshot = await self.profiles.role_instances_snapshot(profile_id)
+            snapshot = await self.profiles.role_instances_page(
+                profile_id,
+                scope,
+                page=max(1, int(payload.get("page") or 1)),
+                page_size=max(5, min(int(payload.get("page_size") or 30), 50)),
+                instance_id=str(payload.get("target_instance_id") or "").strip(),
+            )
             return {
                 "profile_id": profile_id,
                 "scope": scope,
-                "instances": snapshot["sections"][scope],
+                "instances": snapshot["instances"],
+                "pagination": snapshot["pagination"],
             }
         instance = await self._instance(profile_id, scope, payload)
         instance_id = instance["instance_id"]
@@ -1212,6 +1320,12 @@ class AdminPageController(
             instance_id,
             message_page=max(1, int(payload.get("message_page") or 1)),
             message_page_size=max(5, min(int(payload.get("message_page_size") or 20), 100)),
+            intent_page=max(1, int(payload.get("intent_page") or 1)),
+            intent_page_size=max(5, min(int(payload.get("intent_page_size") or 20), 100)),
+            run_page=max(1, int(payload.get("run_page") or 1)),
+            run_page_size=max(5, min(int(payload.get("run_page_size") or 20), 100)),
+            outbox_page=max(1, int(payload.get("outbox_page") or 1)),
+            outbox_page_size=max(5, min(int(payload.get("outbox_page_size") or 20), 100)),
         )
         return {**snapshot, **diagnostics}
 
@@ -1220,7 +1334,12 @@ class AdminPageController(
         instance = await self._instance(profile_id, scope, payload)
         instance_id = instance["instance_id"]
         if action == "controlled_bridge_snapshot":
-            return await self.timeline.controlled_bridge_snapshot(profile_id, instance_id)
+            return await self.timeline.controlled_bridge_snapshot(
+                profile_id,
+                instance_id,
+                page=max(1, int(payload.get("page") or 1)),
+                page_size=max(5, min(int(payload.get("page_size") or 20), 100)),
+            )
         if action == "character_intent_detail":
             detail = await self.timeline_repository.get_character_intent(
                 profile_id, instance_id, str(payload.get("intent_id") or "").strip()

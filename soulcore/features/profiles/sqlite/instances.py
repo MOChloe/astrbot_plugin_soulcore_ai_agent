@@ -171,7 +171,12 @@ class InstanceRecords:
         return self._character_instance(row) if row else None
 
     async def list_character_instances(
-        self, profile_id: str, scope: str | None = None
+        self,
+        profile_id: str,
+        scope: str | None = None,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[CharacterInstance]:
         sql = "SELECT * FROM character_instances WHERE profile_id = ?"
         params: list[Any] = [profile_id]
@@ -181,7 +186,54 @@ class InstanceRecords:
             sql += " AND scope = ?"
             params.append(scope)
         sql += " ORDER BY updated_at DESC, instance_id"
+        if limit is not None:
+            sql += " LIMIT ? OFFSET ?"
+            params.extend((max(1, min(int(limit), 100)), max(0, int(offset))))
         return [self._character_instance(row) for row in await self.db.fetch_all(sql, params)]
+
+    async def count_character_instances(self, profile_id: str, scope: str | None = None) -> int:
+        sql = "SELECT COUNT(*) AS total FROM character_instances WHERE profile_id = ?"
+        params: list[Any] = [profile_id]
+        if scope is not None:
+            if scope not in {"private", "group"}:
+                raise ValueError("scope must be 'private' or 'group'")
+            sql += " AND scope = ?"
+            params.append(scope)
+        row = await self.db.fetch_one(sql, params)
+        return int(row["total"] if row is not None else 0)
+
+    async def character_instance_page(
+        self,
+        profile_id: str,
+        scope: str,
+        instance_id: str,
+        *,
+        page_size: int,
+    ) -> int | None:
+        if scope not in {"private", "group"}:
+            raise ValueError("scope must be 'private' or 'group'")
+        target = await self.db.fetch_one(
+            """SELECT updated_at, instance_id FROM character_instances
+            WHERE profile_id = ? AND scope = ? AND instance_id = ?""",
+            (profile_id, scope, instance_id),
+        )
+        if target is None:
+            return None
+        row = await self.db.fetch_one(
+            """SELECT COUNT(*) AS total FROM character_instances
+            WHERE profile_id = ? AND scope = ? AND (
+                updated_at > ? OR (updated_at = ? AND instance_id < ?)
+            )""",
+            (
+                profile_id,
+                scope,
+                target["updated_at"],
+                target["updated_at"],
+                target["instance_id"],
+            ),
+        )
+        preceding = int(row["total"] if row is not None else 0)
+        return preceding // max(1, int(page_size)) + 1
 
     async def update_character_instance(
         self, profile_id: str, instance_id: str, patch: dict[str, Any]

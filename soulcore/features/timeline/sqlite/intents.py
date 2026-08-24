@@ -83,6 +83,7 @@ class IntentRecords:
         *,
         active_only: bool = False,
         limit: int = 32,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
         sql = """SELECT i.*, r.goal, r.summary, r.motivation,
             r.constraints_json, r.change_reason
@@ -92,12 +93,29 @@ class IntentRecords:
         params: list[Any] = [profile_id, instance_id]
         if active_only:
             sql += " AND i.status IN ('OPEN','PLANNED','IN_PROGRESS','BLOCKED')"
-        sql += " ORDER BY i.priority DESC, i.updated_at DESC LIMIT ?"
-        params.append(max(0, min(int(limit), 100)))
+        sql += " ORDER BY i.priority DESC, i.updated_at DESC LIMIT ? OFFSET ?"
+        params.extend((max(1, min(int(limit), 100)), max(0, int(offset))))
         return [
             self._record(row, json_columns=("constraints_json",))
             for row in await self.db.fetch_all(sql, params)
         ]
+
+    async def character_intent_statistics(
+        self,
+        profile_id: str,
+        instance_id: str,
+    ) -> dict[str, int]:
+        row = await self.db.fetch_one(
+            """SELECT COUNT(*) AS total,
+            COALESCE(SUM(CASE WHEN status IN ('OPEN','PLANNED','IN_PROGRESS','BLOCKED')
+                THEN 1 ELSE 0 END), 0) AS active
+            FROM character_intents WHERE profile_id = ? AND instance_id = ?""",
+            (profile_id, instance_id),
+        )
+        return {
+            "total": int(row["total"] if row is not None else 0),
+            "active": int(row["active"] if row is not None else 0),
+        }
 
     async def apply_character_intent_mutations(
         self,

@@ -62,12 +62,14 @@ async def compact_agent_history_if_needed(
     current_plan: str,
     reference_map: Mapping[str, Any],
     timeout_seconds: float,
+    generation_parameters: Mapping[str, Any] | None = None,
 ) -> ModelContextRequirement:
     requirement = _requirement(
         history,
         base_prompt_tokens=base_prompt_tokens,
         input_image_count=input_image_count,
         model_id=model_id,
+        generation_parameters=generation_parameters,
     )
     if context_limit is None or context_limit < 1:
         return requirement
@@ -133,6 +135,7 @@ async def compact_agent_history_if_needed(
         base_prompt_tokens=base_prompt_tokens,
         input_image_count=input_image_count,
         model_id=model_id,
+        generation_parameters=generation_parameters,
     )
     if compacted_requirement.total_tokens > target:
         raise _compaction_error(
@@ -148,10 +151,12 @@ def _requirement(
     base_prompt_tokens: int,
     input_image_count: int,
     model_id: str,
+    generation_parameters: Mapping[str, Any] | None,
 ) -> ModelContextRequirement:
     return estimate_model_context_requirement(
         input_text_tokens=max(0, int(base_prompt_tokens)) + agent_history_tokens(history, model_id),
         input_image_count=input_image_count,
+        parameters=generation_parameters,
     )
 
 
