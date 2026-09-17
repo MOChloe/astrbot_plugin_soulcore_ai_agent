@@ -95,9 +95,7 @@ class PlayerPageActionsMixin:
     async def _player_bootstrap(self, payload: dict[str, Any]) -> dict[str, Any]:
         rows, selected = await self._player_roles(payload)
         guide = await self._player_guide_state()
-        roles = [
-            player_role_view(row, selected=self._row_profile_id(row) == selected) for row in rows
-        ]
+        roles = await asyncio.gather(*(self._player_role_view(row, selected) for row in rows))
         if not selected:
             return {
                 "version": self._plugin_version(),
@@ -127,6 +125,18 @@ class PlayerPageActionsMixin:
             "problem_count": int(not readiness["ready"])
             + sum(int(item["problem_count"]) for item in contacts),
             "guide": guide,
+        }
+
+    async def _player_role_view(self, row: Mapping[str, Any], selected: str) -> dict[str, Any]:
+        profile_id = self._row_profile_id(row)
+        snapshot = await self.character_models.snapshot(profile_id)
+        model = (snapshot.get("character_model") or {}).get("model") or {}
+        character_name = str((model.get("identity") or {}).get("name") or "").strip()
+        # AstrBot's profile label identifies configuration, not the character.
+        presentation = {**row, "display_name": character_name} if character_name else row
+        return {
+            **player_role_view(presentation, selected=profile_id == selected),
+            "profile_name": str(row.get("name") or row.get("display_name") or "").strip(),
         }
 
     async def _player_contacts(self, payload: dict[str, Any]) -> dict[str, Any]:

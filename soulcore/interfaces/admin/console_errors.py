@@ -208,7 +208,7 @@ def _connection_error(lowered: str) -> tuple[str, str, str, str, str] | None:
 
 
 def _conflict_error(lowered: str) -> tuple[str, str, str, str, str] | None:
-    if "version" in lowered or "conflict" in lowered or "changed; reload before saving" in lowered:
+    if "conflict" in lowered or "changed; reload before saving" in lowered:
         return (
             "version_conflict",
             "内容已在其他位置发生变化",
