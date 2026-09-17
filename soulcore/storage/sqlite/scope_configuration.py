@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 
 from ...features.profiles.ports import (
@@ -212,13 +213,17 @@ class ScopeConfigurationCommandRepository(SqliteRepository):
         cursor = conn.execute(
             """UPDATE group_flow_policies SET quiet_seconds = ?,
                 base_message_count = ?, ordinary_min_reply_gap_seconds = ?,
-                judge_token_budget = ?, version = version + 1, updated_at = ?
+                judge_token_budget = ?, group_wake_rule = COALESCE(?, group_wake_rule),
+                version = version + 1, updated_at = ?
             WHERE profile_id = ? AND scope = 'group' AND version = ?""",
             (
                 int(group_flow["quiet_seconds"]),
                 int(group_flow["base_message_count"]),
                 int(group_flow["ordinary_min_reply_gap_seconds"]),
                 int(group_flow["judge_token_budget"]),
+                json.dumps(group_flow["group_wake_rule"], ensure_ascii=False)
+                if "group_wake_rule" in group_flow
+                else None,
                 now,
                 update.profile_id,
                 int(update.expected_group_flow_version),

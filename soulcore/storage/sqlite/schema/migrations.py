@@ -7,7 +7,7 @@ import sqlite3
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
 
-from .baseline import INSTANCE_CHAT_POLICIES_SQL
+from .baseline import INSTANCE_CHAT_POLICIES_SQL, SQL
 from .current import (
     CURRENT_SCHEMA_VERSION,
     METADATA_SQL,
@@ -108,7 +108,9 @@ def _migrate_v3_to_v4(connection: sqlite3.Connection) -> None:
     """Add the per-private-chat display-name precedence without losing names."""
 
     connection.execute("ALTER TABLE instance_chat_policies RENAME TO instance_chat_policies_v3")
-    connection.execute(INSTANCE_CHAT_POLICIES_SQL)
+    connection.execute(
+        INSTANCE_CHAT_POLICIES_SQL.replace("        group_wake_override TEXT,\n", "")
+    )
     connection.execute(
         """INSERT INTO instance_chat_policies(
             profile_id, instance_id, soulcore_enabled, image_send_enabled,
@@ -254,12 +256,33 @@ def _migrate_v4_to_v5(connection: sqlite3.Connection) -> None:
     connection.execute("ALTER TABLE background_instances DROP COLUMN resumed_at")
 
 
+def _migrate_v5_to_v6(connection: sqlite3.Connection) -> None:
+    """Add opt-in wake rules while preserving every existing policy and revision."""
+    for table in ("instance_chat_policies", "group_flow_policies"):
+        columns = [str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")]
+        statement = (
+            "CREATE TABLE "
+            + table
+            + " ("
+            + SQL.split("CREATE TABLE " + table + " (", 1)[1].split(";", 1)[0]
+            + ";"
+        )
+        connection.execute(f"ALTER TABLE {table} RENAME TO {table}_wake_migration")
+        connection.execute(statement)
+        names = ", ".join(columns)
+        connection.execute(
+            f"INSERT INTO {table} ({names}) SELECT {names} FROM {table}_wake_migration"
+        )
+        connection.execute(f"DROP TABLE {table}_wake_migration")
+
+
 MIGRATION_STEPS = MappingProxyType(
     {
         1: _migrate_v1_to_v2,
         2: _migrate_v2_to_v3,
         3: _migrate_v3_to_v4,
         4: _migrate_v4_to_v5,
+        5: _migrate_v5_to_v6,
     }
 )
 

@@ -8,6 +8,7 @@ import zoneinfo
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
+from ....contracts.group_wake import normalize_group_wake_rule, resolve_group_wake_rule
 from ....contracts.message_reference import normalize_private_fallback_player_name
 from ....contracts.thinking import MainCoreThinkingPolicy, thinking_policy_from_value
 from ....features.profiles.ports import (
@@ -166,6 +167,11 @@ def _bounded_integer(
 
 def validate_group_flow_patch(payload: Mapping[str, Any]) -> dict[str, Any]:
     return {
+        **(
+            {"group_wake_rule": normalize_group_wake_rule(payload["group_wake_rule"])}
+            if "group_wake_rule" in payload
+            else {}
+        ),
         "quiet_seconds": _bounded_integer(payload, "quiet_seconds", 30, 5, 300),
         "base_message_count": _bounded_integer(payload, "base_message_count", 2, 1, 50),
         "ordinary_min_reply_gap_seconds": _bounded_integer(
@@ -599,7 +605,19 @@ class ProfileSettingsController(InstanceOverrideActionsMixin):
         chat_policy = await self.profiles_repository.get_instance_chat_policy(
             profile_id, instance_id
         )
+        wake_view = {}
+        if str(effective.get("scope") or "") == "group" and self.group_flow_repository is not None:
+            default = (
+                await self.group_flow_repository.get_group_flow_policy(profile_id)
+            ).group_wake_rule
+            wake_view = {
+                "default_group_wake_rule": default,
+                "effective_group_wake_rule": resolve_group_wake_rule(
+                    default, chat_policy.group_wake_override
+                ),
+            }
         return {
+            **wake_view,
             "profile_id": profile_id,
             "instance_id": instance_id,
             "scope": str(effective.get("scope") or ""),
@@ -630,6 +648,7 @@ class ProfileSettingsController(InstanceOverrideActionsMixin):
             raise ValueError("policy must be a JSON object")
         boolean_fields = {"soulcore_enabled", "image_send_enabled"}
         allowed = boolean_fields | {
+            "group_wake_override",
             "private_fallback_player_name",
             "private_name_override_enabled",
         }
@@ -649,11 +668,20 @@ class ProfileSettingsController(InstanceOverrideActionsMixin):
             supplied.get("private_fallback_player_name")
         )
         override_enabled = bool(raw_override_enabled)
+        wake_patch = {}
+        if "group_wake_override" in supplied:
+            value = supplied["group_wake_override"]
+            if scope != "group" and value is not None:
+                raise ValueError("group wake rules are only available for group chats")
+            wake_patch["group_wake_override"] = (
+                None if value is None else normalize_group_wake_rule(value)
+            )
         if scope != "private" and (fallback_name or override_enabled):
             raise ValueError("private chat names are only available for private chats")
         if override_enabled and not fallback_name:
             raise ValueError("private name override requires a configured private chat name")
         return {
+            **wake_patch,
             **{field: bool(supplied[field]) for field in boolean_fields},
             "private_fallback_player_name": fallback_name,
             "private_name_override_enabled": override_enabled,
@@ -685,6 +713,11 @@ class ProfileSettingsController(InstanceOverrideActionsMixin):
             expected_version=expected_version,
             private_fallback_player_name=policy["private_fallback_player_name"],
             private_name_override_enabled=policy["private_name_override_enabled"],
+            **(
+                {"group_wake_override": policy["group_wake_override"]}
+                if "group_wake_override" in policy
+                else {}
+            ),
         )
         if saved is None:
             raise ValueError("instance chat policy changed; reload before saving")

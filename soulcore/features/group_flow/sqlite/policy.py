@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Mapping
 
@@ -11,6 +12,7 @@ _POLICY_FIELDS = {
     "base_message_count",
     "ordinary_min_reply_gap_seconds",
     "judge_token_budget",
+    "group_wake_rule",
 }
 
 
@@ -60,6 +62,7 @@ class GroupFlowPolicySql:
             ),
             judge_token_budget=int(values.get("judge_token_budget", current.judge_token_budget)),
             version=current.version + 1,
+            group_wake_rule=values.get("group_wake_rule", current.group_wake_rule),
             created_at=current.created_at,
             updated_at=_now(),
         )
@@ -85,13 +88,14 @@ class GroupFlowPolicySql:
         return conn.execute(
             """UPDATE group_flow_policies SET quiet_seconds = ?,
             base_message_count = ?, ordinary_min_reply_gap_seconds = ?,
-            judge_token_budget = ?, version = version + 1, updated_at = ?
+            judge_token_budget = ?, group_wake_rule = ?, version = version + 1, updated_at = ?
             WHERE profile_id = ? AND scope = 'group' AND version = ?""",
             (
                 value.quiet_seconds,
                 value.base_message_count,
                 value.ordinary_min_reply_gap_seconds,
                 value.judge_token_budget,
+                json.dumps(value.group_wake_rule, ensure_ascii=False),
                 _dt(value.updated_at),
                 value.profile_id,
                 expected_version,
@@ -116,6 +120,7 @@ class GroupFlowPolicySql:
             base_message_count=int(row["base_message_count"]),
             ordinary_min_reply_gap_seconds=int(row["ordinary_min_reply_gap_seconds"]),
             judge_token_budget=int(row["judge_token_budget"]),
+            group_wake_rule=json.loads(row["group_wake_rule"]),
             version=int(row["version"]),
             created_at=_parse(row["created_at"]),
             updated_at=_parse(row["updated_at"]),

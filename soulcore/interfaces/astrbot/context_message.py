@@ -108,6 +108,26 @@ _VOICE_COMPONENT_KINDS = frozenset({"record", "audio", "voice"})
 VOICE_MARKER = "（语音）"
 
 
+def group_wake_input(event: Any) -> tuple[bool, str]:
+    """Read only actual mention and typed text components, before media projection."""
+    items = [
+        item
+        for component in _event_components(event)
+        for item in _normalized_component_payloads(event, component)
+    ]
+    self_id = _event_self_id(event)
+    mentioned = bool(self_id) and any(
+        str(item.get("type") or "").lower() == "at" and str(item.get("qq") or "").strip() == self_id
+        for item in items
+    )
+    text = " ".join(
+        str(item.get("text") or "")
+        for item in items
+        if str(item.get("type") or "").lower() in {"plain", "text"}
+    )
+    return mentioned, text
+
+
 def event_context_payload(event: Any) -> dict[str, Any]:
     """Return structured components without persisting opaque platform objects."""
 

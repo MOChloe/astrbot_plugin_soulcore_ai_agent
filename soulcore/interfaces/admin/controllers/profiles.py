@@ -274,6 +274,9 @@ class ProfilesAdminController:
         group_flow_fields = (
             {
                 "group_flow_policy_version": int(cls._value(group_flow, "version", 1)),
+                "group_wake_rule": cls._value(
+                    group_flow, "group_wake_rule", {"enabled": False, "keywords": []}
+                ),
                 "quiet_seconds": int(cls._value(group_flow, "quiet_seconds", 30)),
                 "base_message_count": int(cls._value(group_flow, "base_message_count", 2)),
                 "ordinary_min_reply_gap_seconds": int(

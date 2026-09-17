@@ -18,6 +18,7 @@ CREATE TABLE instance_chat_policies (
             CHECK(length(private_fallback_player_name) <= 80),
         private_name_override_enabled INTEGER NOT NULL DEFAULT 0
             CHECK(private_name_override_enabled IN (0, 1)),
+        group_wake_override TEXT,
         version INTEGER NOT NULL DEFAULT 1 CHECK(version >= 1),
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
@@ -1103,6 +1104,7 @@ CREATE TABLE group_flow_policies (
             CHECK(ordinary_min_reply_gap_seconds BETWEEN 0 AND 86400),
         judge_token_budget INTEGER NOT NULL DEFAULT 2048
             CHECK(judge_token_budget BETWEEN 512 AND 8192),
+        group_wake_rule TEXT NOT NULL DEFAULT '{"enabled":false,"keywords":[]}',
         version INTEGER NOT NULL DEFAULT 1 CHECK(version >= 1),
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,

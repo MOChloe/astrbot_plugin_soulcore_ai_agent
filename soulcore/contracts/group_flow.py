@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 
+from .group_wake import default_group_wake_rule, normalize_group_wake_rule
+
 
 class GroupFlowStatus(StrEnum):
     COLLECTING = "COLLECTING"
@@ -31,7 +33,10 @@ class GroupFlowPolicy:
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
+    group_wake_rule: dict = field(default_factory=default_group_wake_rule)
+
     def __post_init__(self) -> None:
+        object.__setattr__(self, "group_wake_rule", normalize_group_wake_rule(self.group_wake_rule))
         if not self.profile_id.strip() or self.scope != "group":
             raise ValueError("group flow policy requires a group profile")
         if not 5 <= self.quiet_seconds <= 300:

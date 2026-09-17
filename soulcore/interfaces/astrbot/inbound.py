@@ -9,6 +9,7 @@ from typing import Any
 
 from astrbot.api.event import AstrMessageEvent
 
+from ...contracts.group_wake import resolve_group_wake_rule
 from ...contracts.initialization import INSTANCE_INITIALIZATION_STARTED_NOTICE
 from ...contracts.message_reference import with_inbound_reply_projection
 from ...contracts.models import (
@@ -21,6 +22,7 @@ from ...features.conversation.ports import (
     TurnBufferRepositoryPort,
 )
 from ...features.delivery.ports import DeliveryRepositoryPort
+from ...features.delivery.routes import RouteKind
 from ...features.media.image_service import VisualExpressionService
 from ...features.media.ports import MediaRepositoryPort
 from ...features.media.service import GroupMediaProjectionService
@@ -40,6 +42,7 @@ from .delivery import DeliveryTransport
 from .event_ids import event_message_id, event_reference_message_id
 from .foreground import ForegroundCoreController
 from .group_inbound import INBOUND_ADMISSION_LEASE_SECONDS, GroupInboundMixin
+from .group_wake import event_matches_group_wake
 from .inbound_ledger import append_inbound_ledger
 from .inbound_lifecycle import INSTANCE_RESET_CANCEL_REASON, InboundLifecycleMixin
 from .inbound_recall import InboundRecallMixin, onebot_recall_notice
@@ -261,6 +264,12 @@ class InboundEventController(
             if consumed:
                 self._claim_event(event)
                 return result
+            if captured.kind in (RouteKind.GROUP, RouteKind.GUILD):
+                default = await self.group_flow_repository.get_group_flow_policy(profile.id)
+                chat = await self.profiles.get_instance_chat_policy(profile.id, instance_id)
+                rule = resolve_group_wake_rule(default.group_wake_rule, chat.group_wake_override)
+                if not event_matches_group_wake(event, rule):
+                    return None
             instance = await self.profiles.get_character_instance(profile.id, instance_id)
             instance_refreshed = bool(
                 instance is None

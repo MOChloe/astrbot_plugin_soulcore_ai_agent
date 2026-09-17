@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 
+from ....contracts.group_wake import UNCHANGED_GROUP_WAKE, normalize_group_wake_rule
 from ....contracts.message_reference import normalize_private_fallback_player_name
 from ....contracts.models import InstanceChatPolicy, OutboxStatus
 from ....storage.sqlite.chat_policy_delivery import (
@@ -27,7 +29,7 @@ class InstanceChatPolicyRecords:
     ) -> InstanceChatPolicy:
         row = await self.db.fetch_one(
             """SELECT profile_id, instance_id, soulcore_enabled, image_send_enabled,
-                private_fallback_player_name, private_name_override_enabled,
+                private_fallback_player_name, private_name_override_enabled, group_wake_override,
                 version, created_at, updated_at
             FROM instance_chat_policies
             WHERE profile_id = ? AND instance_id = ?""",
@@ -42,6 +44,9 @@ class InstanceChatPolicyRecords:
             image_send_enabled=bool(row["image_send_enabled"]),
             private_fallback_player_name=str(row["private_fallback_player_name"] or ""),
             private_name_override_enabled=bool(row["private_name_override_enabled"]),
+            group_wake_override=json.loads(row["group_wake_override"])
+            if row["group_wake_override"] is not None
+            else None,
             version=int(row["version"]),
             created_at=_parse(row["created_at"]),
             updated_at=_parse(row["updated_at"]),
@@ -57,6 +62,7 @@ class InstanceChatPolicyRecords:
         expected_version: int,
         private_fallback_player_name: str = "",
         private_name_override_enabled: bool = False,
+        group_wake_override: object = UNCHANGED_GROUP_WAKE,
     ) -> InstanceChatPolicy | None:
         if expected_version < 0:
             raise ValueError("instance chat policy version must not be negative")
@@ -72,6 +78,7 @@ class InstanceChatPolicyRecords:
                 image_send_enabled=image_send_enabled,
                 private_fallback_player_name=fallback_name,
                 private_name_override_enabled=private_name_override_enabled,
+                group_wake_override=group_wake_override,
                 expected_version=expected_version,
                 now=now,
             )
@@ -92,6 +99,7 @@ def _upsert_instance_chat_policy(
     image_send_enabled: bool,
     private_fallback_player_name: str,
     private_name_override_enabled: bool,
+    group_wake_override: object,
     expected_version: int,
     now: str,
 ) -> int:
@@ -109,12 +117,20 @@ def _upsert_instance_chat_policy(
     if private_name_override_enabled and not private_fallback_player_name:
         raise ValueError("private name override requires a configured private chat name")
     previous = conn.execute(
-        """SELECT soulcore_enabled, image_send_enabled
+        """SELECT soulcore_enabled, image_send_enabled, group_wake_override
         FROM instance_chat_policies
         WHERE profile_id = ? AND instance_id = ?""",
         (profile_id, instance_id),
     ).fetchone()
     previous_soulcore_enabled = bool(previous["soulcore_enabled"]) if previous is not None else True
+    if group_wake_override is UNCHANGED_GROUP_WAKE:
+        wake_json = previous["group_wake_override"] if previous is not None else None
+    elif group_wake_override is None:
+        wake_json = None
+    else:
+        if str(instance["scope"]) != "group":
+            raise ValueError("group wake rules are only available for group chats")
+        wake_json = json.dumps(normalize_group_wake_rule(group_wake_override), ensure_ascii=False)
     previous_image_send_enabled = (
         bool(previous["image_send_enabled"]) if previous is not None else True
     )
@@ -131,6 +147,11 @@ def _upsert_instance_chat_policy(
     )
     if changed != 1:
         return changed
+    conn.execute(
+        "UPDATE instance_chat_policies SET group_wake_override = ? "
+        "WHERE profile_id = ? AND instance_id = ?",
+        (wake_json, profile_id, instance_id),
+    )
     if previous_soulcore_enabled and not soulcore_enabled:
         _cancel_disabled_instance_work(
             conn, profile_id=profile_id, instance_id=instance_id, now=now

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
+from ...contracts.group_wake import UNCHANGED_GROUP_WAKE
 from ...contracts.models import (
     CharacterInstance,
     CoreState,
@@ -60,6 +61,7 @@ class InstanceChatPolicyRepositoryPort(Protocol):
         expected_version: int,
         private_fallback_player_name: str = "",
         private_name_override_enabled: bool = False,
+        group_wake_override: object = UNCHANGED_GROUP_WAKE,
     ) -> InstanceChatPolicy | None: ...
 
 

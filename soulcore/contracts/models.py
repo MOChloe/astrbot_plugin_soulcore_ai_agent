@@ -200,6 +200,7 @@ class InstanceChatPolicy:
     image_send_enabled: bool = True
     private_fallback_player_name: str = ""
     private_name_override_enabled: bool = False
+    group_wake_override: dict[str, Any] | None = None
     version: int = 0
     created_at: datetime | None = None
     updated_at: datetime | None = None
