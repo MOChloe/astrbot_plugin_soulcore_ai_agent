@@ -25,14 +25,15 @@ from ...shared.contact_runtime import (
 from ...shared.event_log import record_event
 from ...shared.time import utcnow
 from ._decision_expression import (
+    accepted_terminal_working_text,
+    completed_core_run_result,
+    image_failure_notice,
+)
+from ._decision_expression import (
     has_addressed_timeline as _has_addressed_timeline,
 )
 from ._decision_expression import (
     merge_expression_steps as _merge_expression_steps,
-)
-from .committed_run_result import (
-    accepted_terminal_working_text,
-    completed_core_run_result,
 )
 from .execution import PreparedMainCoreTurn
 from .expression_commit import (
@@ -44,7 +45,6 @@ from .expression_commit import (
 from .expression_commit import (
     file_followups as _file_followups,
 )
-from .final_notices import image_failure_notice
 from .work_continuity import known_work_resource_refs
 from .work_record_stages import MainCoreWorkRecordStageMixin
 

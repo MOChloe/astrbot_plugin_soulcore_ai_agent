@@ -16,7 +16,7 @@ from ...shared.role_current_view import (
     MainCoreBackgroundViewProjection,
     main_core_background_fragments,
 )
-from ...shared.time_display import model_datetime
+from ...shared.time import model_datetime
 from ..stickers.service import StickerWorkset
 from .context import BudgetClass, ContextItem, ContextSource
 from .preparation_inputs import ContextPreparationInputs

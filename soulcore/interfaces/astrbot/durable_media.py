@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ...features.media.errors import IMAGE_INGEST_FAILED
+from ...features.media.domain import IMAGE_INGEST_FAILED
 
 MEDIA_OUTCOME_METADATA_KEY = "inbound_media_outcome"
 MEDIA_OUTCOME_VERSION = 1

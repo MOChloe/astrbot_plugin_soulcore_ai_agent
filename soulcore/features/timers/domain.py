@@ -1,4 +1,4 @@
-"""Immutable values and aggregates for the standalone Timer domain."""
+"Immutable values and aggregates for the standalone Timer domain."
 
 from __future__ import annotations
 
@@ -9,17 +9,75 @@ from datetime import UTC, date, datetime, time, timedelta
 from enum import StrEnum
 from typing import TypeAlias
 
-from .constants import (
-    MAX_IDEMPOTENCY_KEY_CHARS,
-    MAX_INSTANCE_ID_CHARS,
-    MAX_INTERNAL_REF_CHARS,
-    MAX_PROFILE_ID_CHARS,
-    MAX_PROMPT_CHARS,
-    MAX_RELATIVE_DELAY_SECONDS,
-    MAX_SOURCE_REFS,
-    MIN_RELATIVE_DELAY_SECONDS,
-)
-from .errors import TimerErrorCode, fail
+MIN_ABSOLUTE_LEAD_SECONDS = 60
+MAX_ABSOLUTE_HORIZON_SECONDS = 10 * 365 * 24 * 60 * 60
+MIN_RELATIVE_DELAY_SECONDS = 60
+MAX_RELATIVE_DELAY_SECONDS = 365 * 24 * 60 * 60
+
+MAX_PROMPT_CHARS = 1000
+MAX_PROFILE_ID_CHARS = 128
+MAX_INSTANCE_ID_CHARS = 256
+MAX_INTERNAL_REF_CHARS = 128
+MAX_IDEMPOTENCY_KEY_CHARS = 160
+MAX_SOURCE_REFS = 16
+
+MAX_CREATE_ACTIONS_PER_RUN = 3
+MAX_MANAGE_ACTIONS_PER_RUN = 5
+MAX_NONTERMINAL_RULES_PER_INSTANCE = 128
+MAX_NONTERMINAL_OCCURRENCES_PER_INSTANCE = 256
+
+MAX_LIST_RESULTS = 64
+MAX_SEMANTIC_CANDIDATES = 12
+MAX_CANDIDATE_PREVIEW_CHARS = 200
+MAX_CANDIDATE_REASON_CHARS = 240
+MAX_CANDIDATE_EVIDENCE_REFS = 8
+
+
+class TimerErrorCode(StrEnum):
+    INVALID_SCOPE = "INVALID_SCOPE"
+    INVALID_REFERENCE = "INVALID_REFERENCE"
+    INVALID_PROMPT = "INVALID_PROMPT"
+    INVALID_RULE = "INVALID_RULE"
+    UNSUPPORTED_RULE = "UNSUPPORTED_RULE"
+    INVALID_TIMEZONE = "INVALID_TIMEZONE"
+    OUT_OF_RANGE = "OUT_OF_RANGE"
+    INVALID_STATE = "INVALID_STATE"
+    VERSION_CONFLICT = "VERSION_CONFLICT"
+    IDEMPOTENCY_CONFLICT = "IDEMPOTENCY_CONFLICT"
+    SCOPE_MISMATCH = "SCOPE_MISMATCH"
+    LIMIT_EXCEEDED = "LIMIT_EXCEEDED"
+
+
+_SAFE_MESSAGES: dict[TimerErrorCode, str] = {
+    TimerErrorCode.INVALID_SCOPE: "timer scope is invalid",
+    TimerErrorCode.INVALID_REFERENCE: "timer reference is invalid",
+    TimerErrorCode.INVALID_PROMPT: "timer prompt is invalid",
+    TimerErrorCode.INVALID_RULE: "timer rule is invalid",
+    TimerErrorCode.UNSUPPORTED_RULE: "timer rule type is not supported",
+    TimerErrorCode.INVALID_TIMEZONE: "timer timezone is invalid",
+    TimerErrorCode.OUT_OF_RANGE: "timer value is outside the allowed range",
+    TimerErrorCode.INVALID_STATE: "timer state transition is not allowed",
+    TimerErrorCode.VERSION_CONFLICT: "timer version has changed",
+    TimerErrorCode.IDEMPOTENCY_CONFLICT: "timer operation key was reused",
+    TimerErrorCode.SCOPE_MISMATCH: "timer does not belong to this scope",
+    TimerErrorCode.LIMIT_EXCEEDED: "timer domain limit was exceeded",
+}
+
+
+class TimerDomainError(ValueError):
+    """A controlled error which never includes caller payloads."""
+
+    def __init__(self, code: TimerErrorCode) -> None:
+        self.code = code
+        super().__init__(_SAFE_MESSAGES[code])
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}(code={self.code.value!r})"
+
+
+def fail(code: TimerErrorCode) -> TimerDomainError:
+    return TimerDomainError(code)
+
 
 _SAFE_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
 _OPAQUE_REF = re.compile(r"^[A-Za-z0-9_-]{8,128}$")
@@ -364,12 +422,33 @@ __all__ = [
     "DeliveryAssociationRef",
     "ExecutionEnvelopeRef",
     "IdempotencyKey",
+    "MAX_ABSOLUTE_HORIZON_SECONDS",
+    "MAX_CANDIDATE_EVIDENCE_REFS",
+    "MAX_CANDIDATE_PREVIEW_CHARS",
+    "MAX_CANDIDATE_REASON_CHARS",
+    "MAX_CREATE_ACTIONS_PER_RUN",
+    "MAX_IDEMPOTENCY_KEY_CHARS",
+    "MAX_INSTANCE_ID_CHARS",
+    "MAX_INTERNAL_REF_CHARS",
+    "MAX_LIST_RESULTS",
+    "MAX_MANAGE_ACTIONS_PER_RUN",
+    "MAX_NONTERMINAL_OCCURRENCES_PER_INSTANCE",
+    "MAX_NONTERMINAL_RULES_PER_INSTANCE",
+    "MAX_PROFILE_ID_CHARS",
+    "MAX_PROMPT_CHARS",
+    "MAX_RELATIVE_DELAY_SECONDS",
+    "MAX_SEMANTIC_CANDIDATES",
+    "MAX_SOURCE_REFS",
+    "MIN_ABSOLUTE_LEAD_SECONDS",
+    "MIN_RELATIVE_DELAY_SECONDS",
     "NormalizedTimerRule",
     "OccurrenceStableRef",
     "OpaqueTimerRef",
     "RelativeTimerRule",
     "SourceMessageRef",
     "SourceRunRef",
+    "TimerDomainError",
+    "TimerErrorCode",
     "TimerOccurrence",
     "TimerOccurrenceId",
     "TimerOccurrenceStatus",
@@ -381,6 +460,7 @@ __all__ = [
     "TimerScope",
     "WeeklyTimerRule",
     "YearlyTimerRule",
+    "fail",
     "normalize_prompt",
     "require_aware",
 ]

@@ -12,10 +12,7 @@ from ....storage.sqlite.background_projection import project_foreground_message_
 from ....storage.sqlite.outbox_settlement_dependencies import (
     record_sticker_usage_in_transaction,
 )
-from .platform_fragments import (
-    _foreground_fragment_content,
-    _insert_platform_fragment,
-)
+from .outbox_settlement_shared import _foreground_fragment_content, _insert_platform_fragment
 from .support import (
     Any,
     OutboxStatus,

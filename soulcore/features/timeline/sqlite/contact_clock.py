@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from ..contact_models import contact_day_bucket_transition
-from .contact_answer import mark_latest_contact_attempt_answered_sql
-from .contact_commit import ContactCommitContext, ContactCommitTransaction
+from .contact_commit import (
+    ContactCommitContext,
+    ContactCommitTransaction,
+    mark_latest_contact_attempt_answered_sql,
+)
 from .support import (
     Any,
     Mapping,

@@ -16,7 +16,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from ...features.media.inbound import InboundMediaSource
+from ...features.media.domain import InboundMediaSource
 from ...features.media.locator_io import download_public_attachment, validate_remote_url
 from ...shared.ffmpeg_runtime import managed_ffmpeg_executable
 

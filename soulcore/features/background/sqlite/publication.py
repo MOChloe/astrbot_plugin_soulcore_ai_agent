@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 
-from ....shared.time_display import model_datetime
+from ....shared.time import model_datetime
 from ....storage.sqlite.codec import _dt, _dump, _load, _now, _parse
 from ..domain import (
     BackgroundAuthorKind,

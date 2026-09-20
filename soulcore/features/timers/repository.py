@@ -11,13 +11,14 @@ from .domain import (
     DeliveryAssociationRef,
     ExecutionEnvelopeRef,
     IdempotencyKey,
+    TimerErrorCode,
     TimerOccurrence,
     TimerOccurrenceId,
     TimerRule,
     TimerScope,
+    fail,
     require_aware,
 )
-from .errors import TimerErrorCode, fail
 from .transitions import OccurrenceAction
 
 _SAFE_TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$")

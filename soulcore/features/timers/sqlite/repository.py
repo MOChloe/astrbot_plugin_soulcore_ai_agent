@@ -10,10 +10,6 @@ from datetime import datetime
 
 from ....storage.sqlite.codec import encode_datetime
 from ....storage.sqlite.repository import SqliteRepository
-from ..constants import (
-    MAX_NONTERMINAL_OCCURRENCES_PER_INSTANCE,
-    MAX_NONTERMINAL_RULES_PER_INSTANCE,
-)
 from ..contracts import (
     CreateTimerCommand,
     CreateTimerOutcome,
@@ -26,12 +22,18 @@ from ..contracts import (
     ReviseTimerCommand,
     ReviseTimerResult,
     RollOccurrenceCommand,
+    TimerProjectionSource,
+    TimerRefTarget,
 )
 from ..domain import (
+    MAX_NONTERMINAL_OCCURRENCES_PER_INSTANCE,
+    MAX_NONTERMINAL_RULES_PER_INSTANCE,
     IdempotencyKey,
     OccurrenceStableRef,
     OpaqueTimerRef,
     SourceRunRef,
+    TimerDomainError,
+    TimerErrorCode,
     TimerOccurrence,
     TimerOccurrenceId,
     TimerOccurrenceStatus,
@@ -40,9 +42,8 @@ from ..domain import (
     TimerRuleRevision,
     TimerRuleStatus,
     TimerScope,
+    fail,
 )
-from ..errors import TimerDomainError, TimerErrorCode, fail
-from ..projection import TimerProjectionSource, TimerRefTarget
 from ..repository import (
     AdvanceOccurrenceCommand,
     MutateClaimedOccurrenceCommand,

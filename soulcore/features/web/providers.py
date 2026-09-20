@@ -24,16 +24,10 @@ from ...contracts.web import (
     ProviderReadOutput,
     ProviderSearchOutput,
 )
-from .normalization import (
-    bearer_headers as _bearer_headers,
-)
-from .normalization import bounded_int
-from .normalization import (
-    image_items as _image_items,
-)
-from .normalization import (
-    search_items as _items,
-)
+from .content import bearer_headers as _bearer_headers
+from .content import bounded_int
+from .content import image_items as _image_items
+from .content import search_items as _items
 from .transport import (
     AiohttpWebJSONTransport,
     WebHTTPResponse,

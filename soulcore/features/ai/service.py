@@ -15,7 +15,7 @@ from .command_protocol import (
     register_result_references,
     terminal_decision,
 )
-from .command_string_values import (
+from .command_protocol_types import (
     boolean_validator,
     integer_validator,
     parse_boolean,

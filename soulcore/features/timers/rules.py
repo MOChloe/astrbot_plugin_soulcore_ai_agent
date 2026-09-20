@@ -10,24 +10,23 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 
-from .constants import (
+from .domain import (
     MAX_ABSOLUTE_HORIZON_SECONDS,
     MAX_RELATIVE_DELAY_SECONDS,
     MIN_ABSOLUTE_LEAD_SECONDS,
     MIN_RELATIVE_DELAY_SECONDS,
-)
-from .domain import (
     AbsoluteTimerRule,
     NormalizedTimerRule,
     RelativeTimerRule,
+    TimerErrorCode,
     TimerRuleKind,
     TimerScope,
     WeeklyTimerRule,
     YearlyTimerRule,
+    fail,
     normalize_prompt,
     require_aware,
 )
-from .errors import TimerErrorCode, fail
 
 _RFC3339 = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$")
 _WALL_TIME = re.compile(r"^(?P<hour>[01]\d|2[0-3]):(?P<minute>[0-5]\d)$")

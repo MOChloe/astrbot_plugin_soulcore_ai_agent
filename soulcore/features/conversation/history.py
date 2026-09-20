@@ -9,7 +9,7 @@ from typing import Any
 
 from ...contracts.message_reference import safe_model_identity
 from ...contracts.models import ConversationMessage
-from ...shared.time_display import model_datetime
+from ...shared.time import model_datetime
 from .context import ConservativeTokenMeter
 
 

@@ -1,6 +1,6 @@
 """Stable public application surface for reusable media operations."""
 
-from .errors import ImageGenerationRequestError
+from .domain import ImageGenerationRequestError
 from .fingerprints import (
     MAX_ANIMATION_CONTACT_SHEET_EDGE,
     MAX_ANIMATION_CONTACT_SHEET_PIXELS,

@@ -90,6 +90,18 @@ class InstanceChatPolicyRecords:
         return await self.get_instance_chat_policy(profile_id, instance_id)
 
 
+def _group_wake_json(
+    group_wake_override: object, previous: sqlite3.Row | None, scope: str
+) -> str | None:
+    if group_wake_override is UNCHANGED_GROUP_WAKE:
+        return previous["group_wake_override"] if previous is not None else None
+    if group_wake_override is None:
+        return None
+    if scope != "group":
+        raise ValueError("group wake rules are only available for group chats")
+    return json.dumps(normalize_group_wake_rule(group_wake_override), ensure_ascii=False)
+
+
 def _upsert_instance_chat_policy(
     conn: sqlite3.Connection,
     *,
@@ -123,14 +135,7 @@ def _upsert_instance_chat_policy(
         (profile_id, instance_id),
     ).fetchone()
     previous_soulcore_enabled = bool(previous["soulcore_enabled"]) if previous is not None else True
-    if group_wake_override is UNCHANGED_GROUP_WAKE:
-        wake_json = previous["group_wake_override"] if previous is not None else None
-    elif group_wake_override is None:
-        wake_json = None
-    else:
-        if str(instance["scope"]) != "group":
-            raise ValueError("group wake rules are only available for group chats")
-        wake_json = json.dumps(normalize_group_wake_rule(group_wake_override), ensure_ascii=False)
+    wake_json = _group_wake_json(group_wake_override, previous, str(instance["scope"]))
     previous_image_send_enabled = (
         bool(previous["image_send_enabled"]) if previous is not None else True
     )

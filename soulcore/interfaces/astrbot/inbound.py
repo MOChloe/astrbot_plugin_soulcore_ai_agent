@@ -1,4 +1,4 @@
-"""Inbound AstrBot event orchestration for one foreground SoulCore turn."""
+"Inbound AstrBot event orchestration for one foreground SoulCore turn."
 
 from __future__ import annotations
 
@@ -9,18 +9,12 @@ from typing import Any
 
 from astrbot.api.event import AstrMessageEvent
 
-from ...contracts.group_wake import resolve_group_wake_rule
+from ...contracts.group_wake import group_wake_matches, resolve_group_wake_rule
 from ...contracts.initialization import INSTANCE_INITIALIZATION_STARTED_NOTICE
 from ...contracts.message_reference import with_inbound_reply_projection
-from ...contracts.models import (
-    InstanceInitializationState,
-    stable_instance_id,
-)
+from ...contracts.models import InstanceInitializationState, stable_instance_id
 from ...contracts.turn_buffer import TurnBufferGateTransferPort
-from ...features.conversation.ports import (
-    ConversationRepositoryPort,
-    TurnBufferRepositoryPort,
-)
+from ...features.conversation.ports import ConversationRepositoryPort, TurnBufferRepositoryPort
 from ...features.delivery.ports import DeliveryRepositoryPort
 from ...features.delivery.routes import RouteKind
 from ...features.media.image_service import VisualExpressionService
@@ -30,19 +24,16 @@ from ...features.media.storage import MediaStorageCoordinator
 from ...features.profiles.ports import ProfilesRepositoryPort
 from ...features.profiles.service import ProfileRuntimeGate
 from ...features.timeline.ports import TimelineRepositoryPort
-from ...features.timeline.state_gate import (
-    StateMessageGate,
-)
+from ...features.timeline.state_gate import StateMessageGate
 from ...features.turn_buffer.worker import TurnBufferWorker
 from ...shared.event_log import EventLogPort, record_event
 from .admitted_turn import AdmittedTurnMixin
 from .buffered_inbound import BufferedInboundMixin, BufferedLiveHandoff
-from .context_message import event_context_payload
+from .context_message import event_context_payload, group_wake_input
 from .delivery import DeliveryTransport
 from .event_ids import event_message_id, event_reference_message_id
 from .foreground import ForegroundCoreController
 from .group_inbound import INBOUND_ADMISSION_LEASE_SECONDS, GroupInboundMixin
-from .group_wake import event_matches_group_wake
 from .inbound_ledger import append_inbound_ledger
 from .inbound_lifecycle import INSTANCE_RESET_CANCEL_REASON, InboundLifecycleMixin
 from .inbound_recall import InboundRecallMixin, onebot_recall_notice
@@ -60,6 +51,13 @@ from .initialization_inbound import hold_initialization_trigger
 from .profile import ProfileResolver
 from .support import has_trusted_astrbot_command_marker
 from .umo import CapturedUMO, RouteReadinessTracker, physical_event_route
+
+
+def event_matches_group_wake(event: Any, rule: dict) -> bool:
+    if not rule["enabled"]:
+        return True
+    mentioned, text = group_wake_input(event)
+    return group_wake_matches(rule, mentioned=mentioned, text=text)
 
 
 class InboundMediaSupportMixin:

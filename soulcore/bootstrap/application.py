@@ -9,8 +9,7 @@ from typing import Any
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 
-from ..features.files.release_recovery import drain_file_artifact_releases
-from ..features.files.runtime_cleanup import drain_runtime_file_cleanup
+from ..features.files.lifecycle import drain_file_artifact_releases, drain_runtime_file_cleanup
 from ..features.media.visual_cache import (
     VISUAL_OBSERVATION_CONTRACT_VERSION,
     VisualCachePolicy,

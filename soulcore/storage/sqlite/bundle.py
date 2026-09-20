@@ -26,7 +26,7 @@ from ...features.player_profiles.sqlite.repository import SqlitePlayerProfileRep
 from ...features.profiles.sqlite.repository import SqliteProfilesRepository
 from ...features.recall.sqlite.repository import SqliteRecallRepository
 from ...features.stickers.sqlite.repository import SqliteStickerRepository
-from ...features.timeline.sqlite.contact_answer import mark_latest_contact_attempt_answered_sql
+from ...features.timeline.sqlite.contact_commit import mark_latest_contact_attempt_answered_sql
 from ...features.timeline.sqlite.repository import SqliteTimelineRepository
 from ...features.timers.sqlite.admission import SqliteTimerAdmissionRepository
 from ...features.timers.sqlite.repository import SqliteTimerRepository

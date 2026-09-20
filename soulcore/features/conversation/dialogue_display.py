@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ...shared.time_display import model_datetime
+from ...shared.time import model_datetime
 from ..identity import escape_untrusted_identity_syntax
 
 

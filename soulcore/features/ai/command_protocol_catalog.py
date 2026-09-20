@@ -1,7 +1,12 @@
 from __future__ import annotations
 
-from .command_protocol_types import CommandParameter, CommandSpec
-from .command_string_values import boolean_validator, integer_validator, reference_validator
+from .command_protocol_types import (
+    CommandParameter,
+    CommandSpec,
+    boolean_validator,
+    integer_validator,
+    reference_validator,
+)
 
 _RESULT_FIELD_NAMES = {
     "query": "查询",

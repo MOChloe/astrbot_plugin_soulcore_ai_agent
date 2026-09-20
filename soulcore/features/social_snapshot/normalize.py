@@ -7,8 +7,8 @@ from dataclasses import asdict
 from enum import StrEnum
 from typing import TypeVar
 
-from .capabilities import THEME_CAPABILITIES
 from .dto import (
+    THEME_CAPABILITIES,
     CompactItem,
     CompactPerson,
     CompactQuote,
@@ -21,10 +21,12 @@ from .dto import (
     SnapshotQuote,
     SnapshotTheme,
     SnapshotUi,
+    SocialSnapshotError,
+    SocialSnapshotErrorCode,
     SocialSnapshotRequest,
     SocialSnapshotScene,
+    invalid,
 )
-from .errors import SocialSnapshotError, SocialSnapshotErrorCode, invalid
 
 MAX_PARTICIPANTS = 12
 MAX_ENTRIES = 60

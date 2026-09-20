@@ -9,7 +9,7 @@ from typing import Any
 
 from ....storage.sqlite.codec import _dt, _now
 from ....storage.sqlite.engine import SqliteEngine
-from ....storage.sqlite.uow import SqliteUnitOfWork
+from ....storage.sqlite.repository import SqliteUnitOfWork
 from ..ports import RecallProjectionSnapshot
 from .index_repository import RecallIndexRepositoryMixin
 from .repository_support import RecallSqliteRepositorySupport

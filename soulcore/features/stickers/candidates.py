@@ -17,9 +17,8 @@ from .contracts import (
     DESCRIPTION_CONTRACT_VERSION,
     StickerDescriptionContractError,
 )
-from .domain import StickerCandidateSource
+from .domain import TEXT_MODE_INTEGRATED_TEXT, TEXT_MODE_NONE, StickerCandidateSource
 from .policy import StickerRuntimeDisabled
-from .text_modes import TEXT_MODE_INTEGRATED_TEXT, TEXT_MODE_NONE
 
 
 class StickerCandidateAdminMixin:

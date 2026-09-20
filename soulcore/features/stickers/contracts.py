@@ -14,8 +14,8 @@ from ...shared.prompt_document import (
 )
 from ..ai import StructuredOutputRejectedThreeTimes
 from .check_pipeline import StickerCheckPipeline
+from .domain import TEXT_MODE_NONE
 from .policy import StickerRuntimeDisabled
-from .text_modes import TEXT_MODE_NONE
 
 _MAX_MODEL_DESCRIPTION_CHARS = 72
 

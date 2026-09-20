@@ -18,7 +18,7 @@ from ...shared.prompt_document import (
     prompt_markup_record,
     prompt_markup_text,
 )
-from ...shared.time_display import model_datetime, resolve_timezone
+from ...shared.time import model_datetime, resolve_timezone
 from ..identity import internal_identity_placeholders
 from .domain import (
     BackgroundAuthorState,

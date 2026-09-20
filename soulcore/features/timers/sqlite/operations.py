@@ -9,18 +9,19 @@ from dataclasses import replace
 from datetime import datetime
 
 from ....storage.sqlite.codec import decode_datetime, encode_datetime
-from ..constants import MAX_NONTERMINAL_OCCURRENCES_PER_INSTANCE
 from ..contracts import RollOccurrenceCommand
 from ..domain import (
+    MAX_NONTERMINAL_OCCURRENCES_PER_INSTANCE,
     IdempotencyKey,
     OccurrenceStableRef,
+    TimerErrorCode,
     TimerOccurrence,
     TimerOccurrenceId,
     TimerOccurrenceStatus,
     TimerRuleId,
     TimerScope,
+    fail,
 )
-from ..errors import TimerErrorCode, fail
 from ..repository import (
     AdvanceOccurrenceCommand,
     InstanceOccupancy,

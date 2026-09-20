@@ -14,7 +14,7 @@ from ...contracts.ai_models import (
     AIInvocationError,
 )
 from ...shared.prompt_document import xml_text
-from ...shared.time_display import model_datetime
+from ...shared.time import model_datetime
 from ..ai import record_structured_acceptance
 from ..character_context import CharacterRunContext, CharacterRunScope
 from ..character_model import CharacterCustomPrompts, ProjectionPurpose

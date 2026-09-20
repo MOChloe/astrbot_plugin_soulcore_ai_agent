@@ -1,40 +1,231 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Mapping
+import uuid
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
+from typing import Protocol
 
+from ...contracts.turn_buffer import DeferredTurnBufferMessage
 from ...features.delivery.sqlite.outbox import OutboxSettlementCommands
 from ...features.delivery.sqlite.todo_ownership import bind_outbox_todos
 from ...features.files.sqlite.release import FileReleaseCommands
 from ...features.knowledge.sqlite.commit import KnowledgeCommitCommands
-from ...features.main_core.sqlite.commit import (
-    CoreCommitCommands,
-    InstanceCoreResultCommands,
-)
+from ...features.main_core.sqlite.commit import CoreCommitCommands, InstanceCoreResultCommands
 from ...features.main_core.sqlite.work_recovery_run import WorkRecoveryRunCommands
 from ...features.profiles.ports import ProfilesRepositoryPort
-from ...features.profiles.sqlite.runtime_clear import (
-    ProfileRuntimeCommands as ProfileCleanupCommands,
+from ...features.profiles.sqlite.management import ProfileRuntimeCommands as ProfileCleanupCommands
+from ...features.stickers.service import StickerImportIntent, StickerInstanceDisableCommitter
+from ...features.stickers.sqlite.candidate_transactions import commit_core_sticker_import_intent
+from ...features.stickers.sqlite.retrieval import disable_sticker_item_for_instance_in_transaction
+from ...features.timeline.sqlite.deferred_batch_transactions import (
+    DeferredBatchAppendContext,
+    DeferredBatchAppendTransaction,
 )
-from ...features.stickers.sqlite.candidate_transactions import (
-    commit_core_sticker_import_intent,
-)
-from ...features.stickers.sqlite.retrieval import (
-    disable_sticker_item_for_instance_in_transaction,
-)
-from ...features.timeline.sqlite.intents import (
-    apply_character_intent_mutations_sql,
-)
+from ...features.timeline.sqlite.intents import apply_character_intent_mutations_sql
 from .codec import _dt, _dump, _now
-from .core_commit_transactions import CoreCommitTransactions
 from .core_mappers import CoreRecordMappers
 from .engine import SqliteEngine
 from .repository import SqliteRepository
 from .repository_lifecycle import KnowledgeTaskSql
 from .runtime_file_cleanup import RuntimeFileCleanupRecords
 from .scope_configuration import ScopeConfigurationCommandRepository
-from .turn_buffer_transfer import TurnBufferGateTransferCommandRepository
+
+
+class OutboxTodoBinder(Protocol):
+    def __call__(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        profile_id: str,
+        instance_id: str,
+        outbox_id: int,
+        todo_ids: Iterable[str],
+        selected_run_id: int | None,
+    ) -> None: ...
+
+
+class StickerImportCommitter(Protocol):
+    def __call__(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        profile_id: str,
+        instance_id: str,
+        run_id: int,
+        intent: StickerImportIntent,
+        now: str,
+    ) -> tuple[str, bool]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class CoreCommitTransactions:
+    """Route cross-feature writes through dependencies owned by composition."""
+
+    outbox_todo_binder: OutboxTodoBinder
+    sticker_import_committer: StickerImportCommitter
+    sticker_disable_committer: StickerInstanceDisableCommitter
+
+    def bind_todos(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        profile_id: str,
+        instance_id: str,
+        outbox_id: int,
+        todo_ids: Iterable[str],
+        selected_run_id: int | None,
+    ) -> None:
+        self.outbox_todo_binder(
+            conn,
+            profile_id=profile_id,
+            instance_id=instance_id,
+            outbox_id=outbox_id,
+            todo_ids=todo_ids,
+            selected_run_id=selected_run_id,
+        )
+
+    def commit_sticker(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        profile_id: str,
+        instance_id: str,
+        run_id: int,
+        intent: StickerImportIntent,
+        now: str,
+    ) -> tuple[str, bool]:
+        return self.sticker_import_committer(
+            conn,
+            profile_id=profile_id,
+            instance_id=instance_id,
+            run_id=run_id,
+            intent=intent,
+            now=now,
+        )
+
+    def disable_sticker(
+        self,
+        conn: sqlite3.Connection,
+        profile_id: str,
+        instance_id: str,
+        item_id: str,
+        *,
+        now: datetime,
+    ) -> None:
+        self.sticker_disable_committer(
+            conn,
+            profile_id,
+            instance_id,
+            item_id,
+            now=now,
+        )
+
+
+class TurnBufferGateTransferCommandRepository(SqliteRepository):
+    async def transfer_turn_buffer_to_state_gate(
+        self,
+        profile_id: str,
+        instance_id: str,
+        batch_id: str,
+        *,
+        expected_generation: int,
+        expected_version: int,
+        lease_token: int,
+        expected_activity_epoch: int,
+        gate_generation: int,
+        due_at: datetime,
+        messages: Sequence[DeferredTurnBufferMessage],
+        transferred_at: datetime,
+    ) -> bool:
+        now_text = _dt(transferred_at)
+        assert now_text is not None
+
+        def operation(conn: sqlite3.Connection) -> bool:
+            if not self._owns_claim(
+                conn,
+                profile_id,
+                instance_id,
+                batch_id,
+                expected_generation,
+                expected_version,
+                lease_token,
+                expected_activity_epoch,
+            ):
+                return False
+            creation_key = f"state-gate:{int(gate_generation)}"
+            for message in messages:
+                DeferredBatchAppendTransaction(
+                    DeferredBatchAppendContext(
+                        profile_id=profile_id,
+                        instance_id=instance_id,
+                        message_id=int(message.message_id),
+                        due_at=due_at,
+                        activity_epoch=int(expected_activity_epoch),
+                        gate_generation=int(gate_generation),
+                        creation_key=creation_key,
+                        identifier=f"defer:{uuid.uuid4().hex}",
+                        message_ref=message.message_ref,
+                        idempotency_key=message.message_ref,
+                        received_at=message.received_at,
+                        now=now_text,
+                    )
+                )(conn)
+            cursor = conn.execute(
+                """UPDATE conversation_turn_buffer_batches SET status = 'RESOLVED',
+                due_at = NULL, lease_owner = NULL, lease_until = NULL,
+                lease_token = lease_token + 1,
+                resolution_outcome = 'TRANSFERRED_TO_STATE_GATE',
+                version = version + 1, updated_at = ?, resolved_at = ?
+                WHERE profile_id = ? AND instance_id = ? AND batch_id = ?
+                AND status = 'CLAIMED' AND generation = ? AND activity_epoch = ?
+                AND version = ? AND lease_token = ?""",
+                (
+                    now_text,
+                    now_text,
+                    profile_id,
+                    instance_id,
+                    batch_id,
+                    int(expected_generation),
+                    int(expected_activity_epoch),
+                    int(expected_version),
+                    int(lease_token),
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("turn-buffer ownership changed during gate transfer")
+            return True
+
+        return bool(await self.uow.run(operation))
+
+    @staticmethod
+    def _owns_claim(
+        conn: sqlite3.Connection,
+        profile_id: str,
+        instance_id: str,
+        batch_id: str,
+        generation: int,
+        version: int,
+        lease_token: int,
+        activity_epoch: int,
+    ) -> bool:
+        row = conn.execute(
+            """SELECT 1 FROM conversation_turn_buffer_batches
+            WHERE profile_id = ? AND instance_id = ? AND batch_id = ?
+            AND status = 'CLAIMED' AND generation = ? AND activity_epoch = ?
+            AND version = ? AND lease_token = ?""",
+            (
+                profile_id,
+                instance_id,
+                batch_id,
+                int(generation),
+                int(activity_epoch),
+                int(version),
+                int(lease_token),
+            ),
+        ).fetchone()
+        return row is not None
 
 
 class _IntentCommandSupport:
@@ -212,6 +403,7 @@ class OperationRepositories:
 
 
 __all__ = [
+    "CoreCommitTransactions",
     "CoreResultCommandRepository",
     "FileSettlementCommandRepository",
     "KnowledgeBatchCommandRepository",

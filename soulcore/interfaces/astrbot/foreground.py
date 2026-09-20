@@ -1,4 +1,4 @@
-"""Foreground Main Core invocation adapter."""
+"Foreground Main Core invocation adapter."
 
 from __future__ import annotations
 
@@ -28,10 +28,7 @@ from ...shared.event_log import EventLogPort, record_event
 from .delivery import DeliveryTransport
 from .foreground_notes import media_error_note, nonvisual_media_note
 from .outbound import ForegroundOutboundController
-from .passive_feedback import (
-    main_core_no_reply_notice,
-    send_ephemeral_passive_notice,
-)
+from .passive_feedback import main_core_no_reply_notice, send_ephemeral_passive_notice
 from .support import foreground_ai_error_message
 from .umo import CapturedUMO
 

@@ -16,23 +16,21 @@ from .commands import (
 )
 from .domain import (
     PlayerProfileEntry,
+    PlayerProfileError,
     PlayerProfileScope,
     PlayerProfileSnapshot,
     ProfileAdminEvidence,
     ProfileCategory,
+    ProfileConflictError,
     ProfileEntryDraft,
     ProfileEntryStatus,
+    ProfileErrorCode,
     ProfileEvidence,
     ProfileInputModality,
     ProfileLayer,
     ProfileMessageEvidence,
     ProfileSensitivity,
     ProfileSourceType,
-)
-from .errors import (
-    PlayerProfileError,
-    ProfileConflictError,
-    ProfileErrorCode,
     ProfileValidationError,
 )
 from .ports import PlayerProfileReader

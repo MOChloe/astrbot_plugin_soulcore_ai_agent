@@ -20,7 +20,7 @@ from ....features.background.service import (
     normalize_world_lore_input,
 )
 from ....features.character_model.ports import CharacterModelRepositoryPort
-from ....features.files.runtime_cleanup import drain_runtime_file_cleanup
+from ....features.files.lifecycle import drain_runtime_file_cleanup
 from ....features.media import (
     MAX_ANIMATION_DECODED_PIXELS,
     MAX_ANIMATION_DURATION_MS,

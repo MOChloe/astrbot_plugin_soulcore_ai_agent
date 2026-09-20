@@ -9,10 +9,12 @@ from .domain import (
     PlayerProfileScope,
     PlayerProfileSnapshot,
     ProfileCategory,
+    ProfileConflictError,
+    ProfileErrorCode,
     ProfileLayer,
     ProfileSourceType,
+    ProfileValidationError,
 )
-from .errors import ProfileConflictError, ProfileErrorCode, ProfileValidationError
 
 MAX_PROJECTED_ENTRY_TEXT_CHARS = 240
 

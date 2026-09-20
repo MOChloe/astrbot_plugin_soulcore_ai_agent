@@ -12,19 +12,17 @@ from typing import Any, Protocol
 from ...contracts.ai_models import AIErrorCode, AIInvocationError
 from ..profiles.service import ProfileRuntimeDisabled, ProfileRuntimeGate
 from .diagnostics import classify_generic_error
-from .durable_task_control import (
+from .durable_task_runtime import (
+    ActiveTaskRuntime,
     AITaskCancelRequested,
     AITaskControl,
     AITaskLeaseLost,
     AITaskPauseRequested,
-    _current_task_id,
-    current_durable_ai_task_id,
-)
-from .durable_task_runtime import (
-    ActiveTaskRuntime,
     DurableTaskRuntimeRepository,
     PrerequisiteTaskClaim,
     PrerequisiteTaskClaimOutcome,
+    _current_task_id,
+    current_durable_ai_task_id,
     stop_runtime_watchers,
 )
 from .work_taxonomy import durable_task_owns_workflow

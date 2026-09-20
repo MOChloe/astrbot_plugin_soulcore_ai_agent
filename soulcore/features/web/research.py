@@ -40,6 +40,9 @@ from ...contracts.web import (
 )
 from ..profiles.ports import ProfilesRepositoryPort
 from .content import (
+    IMAGE_RESULT_LIMITS,
+    WEB_INTENSITY_LIMITS,
+    WebIntensityLimits,
     canonicalize_url,
     enum_value,
     sanitize_untrusted_web_content,
@@ -71,7 +74,6 @@ from .content import (
     validate_scope as _validate_scope,
 )
 from .domain import WebSearchProviderRecord, WebSearchResultRecord
-from .limits import IMAGE_RESULT_LIMITS, WEB_INTENSITY_LIMITS, WebIntensityLimits
 from .ports import WebAIManagerPort, WebRepositoryPort
 
 

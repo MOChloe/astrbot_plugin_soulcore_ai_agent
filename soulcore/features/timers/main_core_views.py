@@ -8,9 +8,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from tzlocal import get_localzone_name
 
-from .domain import OpaqueTimerRef, TimerRule
-from .errors import TimerErrorCode, fail
-from .projection import TimerCandidateProjection, TimerProjectionSource, TimerRefTarget
+from .contracts import TimerCandidateProjection, TimerProjectionSource, TimerRefTarget
+from .domain import OpaqueTimerRef, TimerErrorCode, TimerRule, fail
 from .rules import canonical_rule, next_occurrence
 
 

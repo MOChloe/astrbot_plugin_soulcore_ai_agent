@@ -5,9 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from .constants import MAX_SEMANTIC_CANDIDATES
-from .domain import SourceMessageRef
-from .errors import TimerDomainError
+from .domain import MAX_SEMANTIC_CANDIDATES, SourceMessageRef, TimerDomainError
 from .lifecycle import (
     TIMER_LIFECYCLE_REVIEW_CAPABILITY,
     TimerLifecycleDecision,

@@ -328,3 +328,16 @@ class CharacterIdentityReference:
     metadata: dict[str, Any] = field(default_factory=dict)
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+TEXT_MODE_NONE = "NONE"
+TEXT_MODE_INTEGRATED_TEXT = "INTEGRATED_TEXT"
+
+GENERATED_STICKER_TEXT_MODES = frozenset(
+    {
+        TEXT_MODE_NONE,
+        TEXT_MODE_INTEGRATED_TEXT,
+    }
+)
+
+__all__ = ["GENERATED_STICKER_TEXT_MODES", "TEXT_MODE_INTEGRATED_TEXT", "TEXT_MODE_NONE"]

@@ -10,8 +10,8 @@ from ....contracts.models import (
     PlatformMessageFragment,
 )
 from ....storage.sqlite.codec import _dt, _now, _parse
-from .message_retraction_recovery import MessageRetractionRecoveryMixin
 from .message_retraction_transactions import (
+    MessageRetractionRecoveryMixin,
     _action,
     _refresh_ledger_retraction_eligibility,
     _resolved_target_fragment_rows,

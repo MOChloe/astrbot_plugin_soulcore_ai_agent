@@ -44,13 +44,11 @@ from ..ai.service import (
 from ..character_model import StoryStylePrompts
 from .agent_context import compact_agent_history_if_needed
 from .agent_protocol import CONTINUE_CHANNEL, FINAL_CHANNEL, main_core_agent_tools, protocol_error
-from .identity_command_projection import parse_identity_turn
-from .processing_view import processing_view
 from .roleplay_prompt import (
     ExecutionRound,
     RolePlayPromptCompiler,
 )
-from .text_command_bound_run import BoundRunLoopMixin
+from .text_command_bound_run import BoundRunLoopMixin, parse_identity_turn, processing_view
 from .text_command_ordered_execution import OrderedCommandExecutionMixin
 from .text_command_runtime import (
     NO_NEW_MAIN_CORE_ACTION,

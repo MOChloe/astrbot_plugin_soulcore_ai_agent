@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any
 
-from ...shared.time_display import model_datetime
+from ...shared.time import model_datetime
 from ..ai.service import ModelVisibleCommandResult
 
 _PRODUCTION_COMMANDS = frozenset(

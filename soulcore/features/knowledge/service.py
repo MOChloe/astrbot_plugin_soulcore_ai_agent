@@ -15,7 +15,7 @@ from ...shared.prompt_document import (
     prompt_markup_block,
     prompt_markup_record,
 )
-from ...shared.time_display import model_datetime
+from ...shared.time import model_datetime
 from ..ai import run_structured_text_session
 from ..ai.service import ParsedCommand, ParsedModelTurn, parse_model_turn
 from ..identity import (
@@ -25,8 +25,7 @@ from ..identity import (
 )
 from ..profiles.ports import ProfilesRepositoryPort
 from ..profiles.service import ProfileRuntimeGate
-from .formation_result import KnowledgeFormationResult
-from .ports import KnowledgeRepositoryPort
+from .ports import KnowledgeFormationResult, KnowledgeRepositoryPort
 
 _FORMATION_FIELDS = (
     "name",

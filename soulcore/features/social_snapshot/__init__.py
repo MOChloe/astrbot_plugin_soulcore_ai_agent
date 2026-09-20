@@ -1,5 +1,5 @@
-from .capabilities import THEME_CAPABILITIES, ThemeCapability
 from .dto import (
+    THEME_CAPABILITIES,
     CompactItem,
     CompactPerson,
     CompactQuote,
@@ -8,10 +8,12 @@ from .dto import (
     ParticipantSide,
     SceneMode,
     SnapshotTheme,
+    SocialSnapshotError,
+    SocialSnapshotErrorCode,
     SocialSnapshotRequest,
     SocialSnapshotScene,
+    ThemeCapability,
 )
-from .errors import SocialSnapshotError, SocialSnapshotErrorCode
 from .normalize import normalize_request
 from .pillow_renderer import PillowSocialSnapshotRenderer
 from .ports import (

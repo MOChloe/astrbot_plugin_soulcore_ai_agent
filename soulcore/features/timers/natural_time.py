@@ -9,13 +9,13 @@ from datetime import UTC, date, datetime, time, timedelta
 from enum import StrEnum
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from .constants import (
+from .domain import (
     MAX_ABSOLUTE_HORIZON_SECONDS,
     MAX_RELATIVE_DELAY_SECONDS,
     MIN_ABSOLUTE_LEAD_SECONDS,
     MIN_RELATIVE_DELAY_SECONDS,
+    require_aware,
 )
-from .domain import require_aware
 from .natural_time_parsing import (
     WEEKDAYS,
     Clock,

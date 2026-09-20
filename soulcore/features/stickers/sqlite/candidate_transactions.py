@@ -11,7 +11,7 @@ from ..domain import (
     sticker_import_source_ref,
 )
 from ..policy import StickerRuntimeDisabled
-from .library_sql import candidate_library_kind, ensure_sticker_library
+from .libraries import candidate_library_kind, ensure_sticker_library
 from .support import (
     Any,
     Mapping,

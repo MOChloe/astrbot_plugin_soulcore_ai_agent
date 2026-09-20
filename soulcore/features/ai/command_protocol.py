@@ -15,7 +15,7 @@ from ...shared.model_image_preview import (
     bounded_model_image_preview,
     encode_model_image_data_uri,
 )
-from ...shared.time_display import model_datetime
+from ...shared.time import model_datetime
 from .command_protocol_catalog import _TERMINAL_SPECS
 from .command_protocol_types import (
     CommandExecutionResult,

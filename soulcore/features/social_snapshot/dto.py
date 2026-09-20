@@ -141,3 +141,86 @@ class SocialSnapshotScene:
             if participant.participant_id == participant_id:
                 return participant
         raise KeyError(participant_id)
+
+
+class SocialSnapshotErrorCode(StrEnum):
+    INVALID_REQUEST = "INVALID_REQUEST"
+    UNSUPPORTED_THEME = "UNSUPPORTED_THEME"
+    UNSUPPORTED_MODE = "UNSUPPORTED_MODE"
+    UNSUPPORTED_ENTRY = "UNSUPPORTED_ENTRY"
+    LIMIT_EXCEEDED = "LIMIT_EXCEEDED"
+    ASSET_MISSING = "ASSET_MISSING"
+    ASSET_INVALID = "ASSET_INVALID"
+    ASSET_TOO_LARGE = "ASSET_TOO_LARGE"
+    FONT_UNAVAILABLE = "FONT_UNAVAILABLE"
+    RENDER_FAILED = "RENDER_FAILED"
+
+
+class SocialSnapshotError(ValueError):
+    """A redaction-safe domain or rendering failure."""
+
+    def __init__(self, code: SocialSnapshotErrorCode, message: str) -> None:
+        self.code = code
+        super().__init__(message)
+
+
+def invalid(message: str) -> SocialSnapshotError:
+    return SocialSnapshotError(SocialSnapshotErrorCode.INVALID_REQUEST, message)
+
+
+@dataclass(frozen=True, slots=True)
+class ThemeCapability:
+    modes: frozenset[SceneMode]
+    entry_kinds: frozenset[EntryKind]
+    supports_quotes: bool
+    supports_draft: bool
+    supports_auto_height: bool
+
+
+CHAT_ENTRIES = frozenset({EntryKind.TIMESTAMP, EntryKind.MESSAGE, EntryKind.IMAGE})
+FEED_ENTRIES = frozenset({EntryKind.POST, EntryKind.COMMENT, EntryKind.REPOST})
+
+THEME_CAPABILITIES: dict[SnapshotTheme, ThemeCapability] = {
+    SnapshotTheme.MOBILE_CHAT: ThemeCapability(
+        modes=frozenset({SceneMode.PRIVATE_CHAT, SceneMode.GROUP_CHAT}),
+        entry_kinds=CHAT_ENTRIES,
+        supports_quotes=True,
+        supports_draft=True,
+        supports_auto_height=True,
+    ),
+    SnapshotTheme.WECHAT: ThemeCapability(
+        modes=frozenset({SceneMode.PRIVATE_CHAT, SceneMode.GROUP_CHAT}),
+        entry_kinds=CHAT_ENTRIES,
+        supports_quotes=True,
+        supports_draft=True,
+        supports_auto_height=False,
+    ),
+    SnapshotTheme.DINGTALK: ThemeCapability(
+        modes=frozenset({SceneMode.PRIVATE_CHAT, SceneMode.GROUP_CHAT}),
+        entry_kinds=CHAT_ENTRIES | {EntryKind.FILE},
+        supports_quotes=True,
+        supports_draft=True,
+        supports_auto_height=False,
+    ),
+    SnapshotTheme.WEIBO_FEED: ThemeCapability(
+        modes=frozenset({SceneMode.FEED}),
+        entry_kinds=FEED_ENTRIES,
+        supports_quotes=False,
+        supports_draft=False,
+        supports_auto_height=False,
+    ),
+    SnapshotTheme.X: ThemeCapability(
+        modes=frozenset({SceneMode.FEED}),
+        entry_kinds=FEED_ENTRIES,
+        supports_quotes=False,
+        supports_draft=False,
+        supports_auto_height=False,
+    ),
+    SnapshotTheme.XIAOHONGSHU: ThemeCapability(
+        modes=frozenset({SceneMode.NOTE}),
+        entry_kinds=frozenset({EntryKind.POST, EntryKind.COMMENT}),
+        supports_quotes=False,
+        supports_draft=True,
+        supports_auto_height=False,
+    ),
+}

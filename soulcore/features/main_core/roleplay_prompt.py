@@ -1,4 +1,4 @@
-"""Compile the model-facing RolePlay document from bounded SoulCore context."""
+"Compile the model-facing RolePlay document from bounded SoulCore context."
 
 from __future__ import annotations
 
@@ -17,9 +17,7 @@ from ...shared.prompt_document import (
     project_prompt_text,
     xml_text,
 )
-from ..ai.service import (
-    MainCoreCommandRegistry,
-)
+from ..ai.service import MainCoreCommandRegistry
 from ..character_model import (
     DEFAULT_RELATIONSHIP_CONTEXT_PROMPT,
     MainCoreModePrompts,
@@ -48,15 +46,46 @@ from .roleplay_prompt_contracts import (
 from .roleplay_prompt_rendering import (
     MAIN_CORE_PROMPT_PROTOCOL_VERSION as MAIN_CORE_PROMPT_PROTOCOL_VERSION,
 )
-from .roleplay_prompt_rendering import (
-    RolePlayPromptRenderingMixin,
-)
+from .roleplay_prompt_rendering import RolePlayPromptRenderingMixin
 from .roleplay_references import RolePlayReferenceMixin
-from .thinking_prompt import thinking_requirement
-from .turn_responsibility import (
-    DEFAULT_MESSAGE_RESPONSIBILITY,
-    MainCoreTurnResponsibility,
+from .turn_responsibility import DEFAULT_MESSAGE_RESPONSIBILITY, MainCoreTurnResponsibility
+
+_INFORMATION_COMMANDS = frozenset(
+    {
+        "想想对某人的印象",
+        "回想",
+        "翻聊天记录",
+        "看看我的安排",
+        "查资料",
+        "看链接",
+        "找图片",
+        "看清这张图",
+        "找表情",
+    }
 )
+
+_EXISTING_PLAN_REQUIREMENT = "已有 Plan，按其推进；只有新结果改变目标或关键取舍时才整体替换。"
+
+
+def thinking_requirement(
+    registry: MainCoreCommandRegistry,
+    current_plan: str,
+    policy: MainCoreThinkingPolicy,
+) -> str:
+    requirements: list[str] = []
+    if any(_visible_command(registry, name) for name in _INFORMATION_COMMANDS):
+        requirements.append(policy.research_requirement)
+    if _visible_command(registry, "制定Plan"):
+        if str(current_plan or "").strip():
+            requirements.append(_EXISTING_PLAN_REQUIREMENT)
+        else:
+            requirements.append(policy.plan_requirement)
+    return "\n\n".join(requirements)
+
+
+def _visible_command(registry: MainCoreCommandRegistry, name: str) -> bool:
+    command = registry.get(name)
+    return command is not None and command.prompt_visible and not command.terminal
 
 
 def project_prepared_identity(value: Any, prepared_context: Any | None) -> str:
@@ -601,7 +630,4 @@ class RolePlayPromptCompiler(RolePlayPromptRenderingMixin, RolePlayReferenceMixi
         return super()._recent_experience_block(state)
 
 
-__all__ = [
-    "ExecutionRound",
-    "RolePlayPromptCompiler",
-]
+__all__ = ["ExecutionRound", "RolePlayPromptCompiler", "thinking_requirement"]

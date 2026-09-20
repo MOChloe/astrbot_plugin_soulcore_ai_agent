@@ -17,14 +17,15 @@ from ....features.ai.work_taxonomy import (
 )
 from ..presentation import jsonable
 from .ai_work_attempt_views import (
+    audio_attempt_summary,
     debug_attempt_view,
     debug_available,
+    error_view,
+    known_error_guidance,
     looks_like_internal_identifier,
     raw_attempt_view,
     record_duration_ms,
 )
-from .ai_work_audio_views import audio_attempt_summary
-from .ai_work_error_views import error_view, known_error_guidance
 
 
 def attempt_token_view(attempt: Mapping[str, Any]) -> dict[str, int]:

@@ -19,9 +19,13 @@ from .contracts import (
     StickerGenerationSpec,
     StickerTextFinishingDeferred,
 )
-from .domain import STICKER_CHECK_FAILURE_LIMIT, StickerCheckVerdict
+from .domain import (
+    STICKER_CHECK_FAILURE_LIMIT,
+    TEXT_MODE_INTEGRATED_TEXT,
+    TEXT_MODE_NONE,
+    StickerCheckVerdict,
+)
 from .policy import StickerRuntimeDisabled
-from .text_modes import TEXT_MODE_INTEGRATED_TEXT, TEXT_MODE_NONE
 
 
 class StickerAdmissionMixin:

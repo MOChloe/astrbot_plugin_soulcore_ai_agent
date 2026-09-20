@@ -1,4 +1,6 @@
-"""Persistence and collaboration boundaries for the knowledge feature."""
+"Persistence and collaboration boundaries for the knowledge feature."
+
+from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -40,3 +42,12 @@ class KnowledgeRepositoryPort(Protocol):
     async def search_memories(self, *args: object, **kwargs: object) -> Any: ...
     async def search_knowledge_facts(self, *args: object, **kwargs: object) -> Any: ...
     async def settle_empty_knowledge_task(self, *args: object, **kwargs: object) -> Any: ...
+
+
+@dataclass(frozen=True, slots=True)
+class KnowledgeFormationResult:
+    memories: tuple[dict[str, Any], ...] = ()
+    world_info: tuple[dict[str, Any], ...] = ()
+
+
+__all__ = ["KnowledgeFormationResult"]

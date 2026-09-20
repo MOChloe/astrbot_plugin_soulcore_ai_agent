@@ -13,7 +13,7 @@ _EXPORTS = {
     "RepositoryBundle": (".sqlite.bundle", "RepositoryBundle"),
     "SQLiteBackupManager": (".sqlite.backup", "SQLiteBackupManager"),
     "SqliteEngine": (".sqlite.engine", "SqliteEngine"),
-    "SqliteUnitOfWork": (".sqlite.uow", "SqliteUnitOfWork"),
+    "SqliteUnitOfWork": (".sqlite.repository", "SqliteUnitOfWork"),
     "generate_media_asset_id": ("..features.media", "generate_media_asset_id"),
     "infer_backup_path": (".sqlite.backup", "infer_backup_path"),
     "infer_media_root": ("..features.media", "infer_media_root"),

@@ -15,6 +15,7 @@ from typing import Any
 
 from .domain import (
     InboundMediaRegistrationState,
+    InboundMediaSource,
     MediaAsset,
     MediaFileStatus,
     MediaInspectionStatus,
@@ -22,7 +23,6 @@ from .domain import (
     MediaPurpose,
 )
 from .files import MediaFileStore, await_cancellation_safe_file_store
-from .inbound import InboundMediaSource
 from .inspection import (
     _now,
     generate_media_asset_id,

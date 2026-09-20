@@ -36,7 +36,7 @@ from ..interfaces.astrbot.inbound_voice_repository import (
 )
 from ..interfaces.astrbot.outbound import ForegroundOutboundController
 from ..interfaces.astrbot.persona_import import AstrBotPersonaImportAdapter
-from ..storage.sqlite.uow import SqliteUnitOfWork
+from ..storage.sqlite.repository import SqliteUnitOfWork
 from .application import SoulCoreApplication
 from .foundation import Foundation
 from .workers import CoreRuntimeParts, WorkerParts

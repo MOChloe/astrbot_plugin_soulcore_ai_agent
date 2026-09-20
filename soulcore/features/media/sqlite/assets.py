@@ -20,10 +20,10 @@ from ..domain import (
 )
 from ..inspection import _dt, _dump, _now
 from .asset_projection_records import (
+    MediaVisualCacheRecords,
     _link_media_to_message_sql,
     _register_platform_media_reference_sql,
 )
-from .visual_cache_records import MediaVisualCacheRecords
 
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
 MAX_INBOUND_ATTACHMENT_BYTES = 50 * 1024 * 1024

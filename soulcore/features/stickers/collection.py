@@ -26,14 +26,15 @@ from .contracts import (
     StickerGenerationSpec,
     StickerTextFinishingDeferred,
 )
-from .domain import StickerCollectedAsset, StickerSourceKind
-from .planning import StickerCollectionGap, StickerPlanningMixin, StickerTextFinishingMixin
-from .policy import StickerRuntimeDisabled
-from .text_modes import (
+from .domain import (
     GENERATED_STICKER_TEXT_MODES,
     TEXT_MODE_INTEGRATED_TEXT,
     TEXT_MODE_NONE,
+    StickerCollectedAsset,
+    StickerSourceKind,
 )
+from .planning import StickerCollectionGap, StickerPlanningMixin, StickerTextFinishingMixin
+from .policy import StickerRuntimeDisabled
 
 
 class StickerCollectionMixin(StickerPlanningMixin, StickerTextFinishingMixin):

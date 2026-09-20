@@ -9,7 +9,7 @@ _EXPORTS = {
     "RepositoryBundle": (".bundle", "RepositoryBundle"),
     "SQLiteBackupManager": (".backup", "SQLiteBackupManager"),
     "SqliteEngine": (".engine", "SqliteEngine"),
-    "SqliteUnitOfWork": (".uow", "SqliteUnitOfWork"),
+    "SqliteUnitOfWork": (".repository", "SqliteUnitOfWork"),
     "infer_backup_path": (".backup", "infer_backup_path"),
 }
 

@@ -12,11 +12,6 @@ from typing import Any, Protocol
 
 from ...contracts.models import CoreWakeRequest, WakeSource
 from . import main_core_views as timer_views
-from .constants import (
-    MAX_CREATE_ACTIONS_PER_RUN,
-    MAX_MANAGE_ACTIONS_PER_RUN,
-    MAX_SEMANTIC_CANDIDATES,
-)
 from .contracts import (
     CreateTimerCommand,
     CreateTimerOutcome,
@@ -27,13 +22,20 @@ from .contracts import (
     PreparedTimerCreation,
     ReviseTimerCommand,
     ReviseTimerResult,
+    TimerRefTarget,
+    project_candidates,
 )
 from .domain import (
+    MAX_CREATE_ACTIONS_PER_RUN,
+    MAX_MANAGE_ACTIONS_PER_RUN,
+    MAX_SEMANTIC_CANDIDATES,
     IdempotencyKey,
     OccurrenceStableRef,
     OpaqueTimerRef,
     SourceMessageRef,
     SourceRunRef,
+    TimerDomainError,
+    TimerErrorCode,
     TimerOccurrence,
     TimerOccurrenceId,
     TimerOccurrenceStatus,
@@ -42,9 +44,9 @@ from .domain import (
     TimerRuleRevision,
     TimerRuleStatus,
     TimerScope,
+    fail,
     normalize_prompt,
 )
-from .errors import TimerDomainError, TimerErrorCode, fail
 from .natural_time import (
     ArrangementChangeKind,
     ArrangementChangeResolution,
@@ -53,7 +55,6 @@ from .natural_time import (
     interpret_natural_time,
     natural_time_candidate_payload,
 )
-from .projection import TimerRefTarget, project_candidates
 from .rules import (
     exact_timer_fingerprint,
     next_occurrence,

@@ -18,11 +18,9 @@ from ....storage.sqlite.outbox_settlement_dependencies import (
 from .expression_outbox import defer_following_expression_step
 from .outbox_settlement_shared import (
     _cancel_terminal_expression_suffix,
-    _resolve_terminal_group_window,
-)
-from .platform_fragments import (
     _fragment_content,
     _insert_platform_fragment,
+    _resolve_terminal_group_window,
 )
 from .support import (
     Any,

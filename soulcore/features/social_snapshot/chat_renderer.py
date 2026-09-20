@@ -4,8 +4,8 @@ from dataclasses import dataclass
 
 from PIL import Image, ImageDraw, ImageFont
 
-from .assets import AssetImages
 from .drawing import (
+    AssetImages,
     FontBook,
     cover_image,
     draw_android_status_bar,
@@ -23,9 +23,10 @@ from .dto import (
     SnapshotEntry,
     SnapshotParticipant,
     SnapshotTheme,
+    SocialSnapshotError,
+    SocialSnapshotErrorCode,
     SocialSnapshotScene,
 )
-from .errors import SocialSnapshotError, SocialSnapshotErrorCode
 
 
 @dataclass(frozen=True, slots=True)

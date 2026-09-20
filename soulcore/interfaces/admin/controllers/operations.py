@@ -20,7 +20,7 @@ from ....contracts.runtime_cleanup import (
 )
 from ....features.ai.durable_tasks import DurableAITaskManager
 from ....features.background.domain import AUTHOR_ORDER
-from ....features.files.runtime_cleanup import drain_runtime_file_cleanup
+from ....features.files.lifecycle import drain_runtime_file_cleanup
 from ....features.files.service import FileArtifactService
 from ....features.main_core.ports import MainCoreHandlePort
 from ....features.main_core.service import MainCoreRunner

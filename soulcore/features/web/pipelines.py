@@ -24,6 +24,8 @@ from ...contracts.web import (
     WebResearchError,
 )
 from .content import (
+    IMAGE_RESULT_LIMITS,
+    WEB_INTENSITY_LIMITS,
     resolved_depth,
     safe_error_code,
     sanitize_untrusted_web_content,
@@ -31,7 +33,6 @@ from .content import (
     validated_query,
 )
 from .domain import WebImageSearchResultRecord, WebPageSnapshotRecord
-from .limits import IMAGE_RESULT_LIMITS, WEB_INTENSITY_LIMITS
 
 if TYPE_CHECKING:
     from .research import WebResearchService

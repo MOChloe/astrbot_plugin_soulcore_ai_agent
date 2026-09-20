@@ -307,6 +307,15 @@ def _policy_view(value: Any, *boolean_fields: str) -> dict[str, Any]:
     return rendered
 
 
+def _instance_group_wake_patch(supplied: Mapping[str, Any], scope: str) -> dict[str, Any]:
+    if "group_wake_override" not in supplied:
+        return {}
+    value = supplied["group_wake_override"]
+    if scope != "group" and value is not None:
+        raise ValueError("group wake rules are only available for group chats")
+    return {"group_wake_override": None if value is None else normalize_group_wake_rule(value)}
+
+
 class ProfileSettingsController(InstanceOverrideActionsMixin):
     validate_group_flow_patch = staticmethod(validate_group_flow_patch)
 
@@ -668,14 +677,7 @@ class ProfileSettingsController(InstanceOverrideActionsMixin):
             supplied.get("private_fallback_player_name")
         )
         override_enabled = bool(raw_override_enabled)
-        wake_patch = {}
-        if "group_wake_override" in supplied:
-            value = supplied["group_wake_override"]
-            if scope != "group" and value is not None:
-                raise ValueError("group wake rules are only available for group chats")
-            wake_patch["group_wake_override"] = (
-                None if value is None else normalize_group_wake_rule(value)
-            )
+        wake_patch = _instance_group_wake_patch(supplied, scope)
         if scope != "private" and (fallback_name or override_enabled):
             raise ValueError("private chat names are only available for private chats")
         if override_enabled and not fallback_name:

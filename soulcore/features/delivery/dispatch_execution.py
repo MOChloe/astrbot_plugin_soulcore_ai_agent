@@ -19,9 +19,9 @@ from ...shared.event_log import record_event
 from ..files.service import verify_artifact
 from .addressing import addressing_prefixes
 from .dispatch_context import OutboxDispatchContext, OutboxDispatchPreparationMixin
-from .dispatch_settlement import OutboxDispatchSettlementMixin
 from .dispatch_transport import OutboxPreparedTransportMixin, VoiceArtifactDispatchError
 from .qpm import QPMDispatchFence
+from .settlement import OutboxDispatchSettlementMixin
 from .sticker_delivery import prepare_sticker_delivery_image
 from .transport import DeliveryMessage, DeliveryResult, DeliveryStatus
 from .voice_delivery import VoiceDeliveryMixin

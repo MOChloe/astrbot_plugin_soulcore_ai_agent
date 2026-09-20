@@ -2,6 +2,6 @@
 
 from __future__ import annotations
 
-from ...features.player_profiles.sqlite.mutations import commit_profile_command
+from ...features.player_profiles.sqlite.repository import commit_profile_command
 
 __all__ = ["commit_profile_command"]

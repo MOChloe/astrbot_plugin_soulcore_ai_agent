@@ -25,3 +25,14 @@ SoulCore 要求 Python 3.11 或更高版本。使用 `requirements-dev.txt` 安�
 ```powershell
 <python.exe> scripts/build_release.py
 ```
+
+发布包与公开 Git 提交树都必须少于 800 个文件。公开提交树的统计包含
+`.github`、隐藏文件、文档和其他已提交文件，`export-ignore` 不会豁免它们。
+发布前对独立公开仓库的待发布提交执行：
+
+```powershell
+<python.exe> scripts/build_release.py --public-repository <公开仓库路径> --revision <提交或树对象>
+```
+
+尚未提交的公开快照使用 `--public-snapshot <快照目录>` 检查全部实际文件；
+此检查只排除根目录的 Git 管理数据，不应用插件安装载荷白名单。

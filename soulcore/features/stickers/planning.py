@@ -26,9 +26,8 @@ from .contracts import (
     StickerTextFinishingDeferred,
     sticker_collect_output_contract,
 )
-from .domain import StickerSourceKind
+from .domain import TEXT_MODE_INTEGRATED_TEXT, StickerSourceKind
 from .policy import StickerRuntimeDisabled
-from .text_modes import TEXT_MODE_INTEGRATED_TEXT
 
 
 class StickerTextFinishingMixin:

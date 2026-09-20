@@ -424,7 +424,7 @@ async def _inspection_failure(
 
 
 def _raise_empty(failures: Sequence[Mapping[str, str]]) -> None:
-    from .errors import WebImageInspectionError
+    from .domain import WebImageInspectionError
 
     codes = {str(item.get("error") or "") for item in failures}
     if "VISION_UNAVAILABLE" in codes:

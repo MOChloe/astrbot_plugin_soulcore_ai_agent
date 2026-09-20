@@ -47,7 +47,7 @@ from .command_catalog import (
 )
 from .command_context import DecisionCollector
 from .media_turn import current_media_asset_ids, main_core_supports_vision
-from .roleplay_prompt_stable import (
+from .roleplay_prompt_rendering import (
     background_life_and_communication_prompt_block,
     main_core_custom_prompt_blocks,
 )

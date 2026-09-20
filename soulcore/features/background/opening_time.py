@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, time, timedelta
 
-from ...shared.time_display import resolve_timezone
+from ...shared.time import resolve_timezone
 
 OPENING_HANDOFF_LOCAL_HOUR = 16
 

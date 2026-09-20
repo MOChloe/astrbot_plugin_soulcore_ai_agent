@@ -11,7 +11,7 @@ from tzlocal import get_localzone_name
 
 from ...contracts.ai_models import AIAgentOutputItem
 from ...shared.narrative_autonomy import CHARACTER_WORLD_CREATIVE_AUTONOMY
-from ...shared.time_display import model_datetime, resolve_timezone
+from ...shared.time import model_datetime, resolve_timezone
 from ..ai.service import CommandExecutionResult, MainCoreCommandRegistry
 from ..character_model import (
     DEFAULT_RELATIONSHIP_CONTEXT_PROMPT,

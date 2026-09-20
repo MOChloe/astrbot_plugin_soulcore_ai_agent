@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from ....contracts.delivery_visibility import DIALOGUE_CONTINUITY_OUTBOUND_STATUSES
 from ...profiles.service import ProfileRuntimeDisabled
-from ..formation_result import KnowledgeFormationResult
+from ..ports import KnowledgeFormationResult
 from .support import (
     CONTEXT_ELIGIBLE_INBOUND_STATUSES,
     KNOWLEDGE_TASK_TYPE,

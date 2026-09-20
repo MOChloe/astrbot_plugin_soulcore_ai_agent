@@ -18,32 +18,30 @@ from ..profiles.service import ProfileRuntimeGate
 from ..recall import RecallService
 from . import MAX_IMAGE_BYTES, MediaFileStore
 from .domain import (
-    InboundMediaRegistrationState,
-    MediaInspectionStatus,
-    MediaOrigin,
-)
-from .errors import (
     IMAGE_INGEST_FAILED,
     ImageGenerationDisabledError,
     ImageGenerationRequestError,
     InboundImageIngestResult,
+    InboundMediaRegistrationState,
+    InboundMediaSource,
+    MediaInspectionStatus,
+    MediaOrigin,
 )
 from .files import await_cancellation_safe_file_store
+from .group_projection import (
+    MainCoreMediaProjection,
+    inspect_current_media,
+    main_core_media_semantic_note,
+    project_main_core_media,
+)
 from .image_generation_prompt import ImageReferenceBinding
 from .image_generation_prompt import generation_prompt as _generation_prompt
-from .inbound import InboundMediaSource
 from .inspection import inspect_animation_bytes
 from .locator_io import (
     download_http,
     validate_remote_url,
     vision_payload,
     vision_payloads,
-)
-from .main_core_projection import (
-    MainCoreMediaProjection,
-    inspect_current_media,
-    main_core_media_semantic_note,
-    project_main_core_media,
 )
 from .ports import MediaRepositoryPort, VisualProfilesPort, VisualWorldPort
 from .sticker_likelihood import classify_possible_sticker
