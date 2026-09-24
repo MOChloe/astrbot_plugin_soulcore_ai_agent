@@ -42,9 +42,10 @@ class GroupFlowSettlementSql(GroupFlowLifecycleSql):
                     now=now,
                 )
             else:
-                self._decline_and_merge(
+                self._return_to_collecting(
                     conn,
                     current,
+                    judgment_finished=True,
                     error_code=error_code,
                     now=now,
                 )
@@ -87,14 +88,19 @@ class GroupFlowSettlementSql(GroupFlowLifecycleSql):
             ),
         )
 
-    def _decline_and_merge(
+    def _return_to_collecting(
         self,
         conn: sqlite3.Connection,
         row: sqlite3.Row,
         *,
+        judgment_finished: bool,
         error_code: str,
         now: datetime,
     ) -> None:
+        # A judge owns a frozen batch while arrivals collect separately. Merge
+        # that batch in this transaction before restoring the unique collector.
+        # Shutdown returns unfinished work; expiry/decline only release the
+        # judged prefix, so later arrivals still need their own decision.
         profile_id = str(row["profile_id"])
         instance_id = str(row["instance_id"])
         members, direct = self._merge_next_members(conn, row)
@@ -128,27 +134,31 @@ class GroupFlowSettlementSql(GroupFlowLifecycleSql):
             now=now,
         )
         gap_due = reply_gap_due_at(policy, last_visible_at=last_visible)
-        self._persist_declined_window(
+        self._persist_collecting_window(
             conn,
             row,
             members,
             schedule,
             repeat_ratio,
             direct,
+            judge_result="UNSUITABLE" if judgment_finished else str(row["judge_result"]),
             error_code=error_code,
             gap_due=gap_due,
             now=now,
         )
+        if not judgment_finished:
+            return
+        judged_through = int(row["judge_through_message_id"] or row["last_message_id"])
         conn.execute(
             """UPDATE group_flow_instance_state SET last_judged_message_id = ?,
             updated_at = ? WHERE profile_id = ? AND instance_id = ?""",
-            (row["judge_through_message_id"], _dt(now), profile_id, instance_id),
+            (judged_through, _dt(now), profile_id, instance_id),
         )
         advance_group_activity_release_boundary(
             conn,
             profile_id=profile_id,
             instance_id=instance_id,
-            through_message_id=int(row["judge_through_message_id"]),
+            through_message_id=judged_through,
             now=str(_dt(now)),
         )
 
@@ -214,7 +224,7 @@ class GroupFlowSettlementSql(GroupFlowLifecycleSql):
             )
         ), direct
 
-    def _persist_declined_window(
+    def _persist_collecting_window(
         self,
         conn: sqlite3.Connection,
         row: sqlite3.Row,
@@ -223,6 +233,7 @@ class GroupFlowSettlementSql(GroupFlowLifecycleSql):
         repeat_ratio: float,
         direct: bool,
         *,
+        judge_result: str,
         error_code: str,
         gap_due: datetime | None,
         now: datetime,
@@ -232,7 +243,7 @@ class GroupFlowSettlementSql(GroupFlowLifecycleSql):
             last_message_id = ?, message_count = ?, rate_ewma = ?, repeat_ratio = ?,
             judge_threshold = ?, next_judge_at = ?, quiet_due_at = ?,
             dynamic_due_at = ?, direct_due_at = ?, direct_address = ?,
-            judge_result = 'UNSUITABLE', judge_error_code = ?,
+            judge_result = ?, judge_error_code = ?,
             lease_owner = NULL, lease_until = NULL, lease_token = lease_token + 1,
             version = version + 1, updated_at = ? WHERE window_id = ?""",
             (
@@ -246,6 +257,7 @@ class GroupFlowSettlementSql(GroupFlowLifecycleSql):
                 _dt(self._later(schedule.dynamic_due_at, gap_due)),
                 _dt(schedule.direct_due_at),
                 int(direct),
+                judge_result,
                 str(error_code).strip()[:120],
                 _dt(now),
                 row["window_id"],

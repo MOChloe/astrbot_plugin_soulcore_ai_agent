@@ -222,7 +222,7 @@ class GroupFlowLifecycleSql(GroupFlowDueSql, GroupFlowOrphanRecoverySql):
                 now=now,
                 now_text=now_text,
             )
-            judgments = self._recover_judgments(conn, now_text)
+            judgments = self._recover_judgments(conn, now=now)
             runs = conn.execute(
                 """UPDATE group_flow_windows SET status = 'READY', ready_at = ?,
                 lease_owner = NULL, lease_until = NULL, lease_token = lease_token + 1,
@@ -242,8 +242,8 @@ class GroupFlowLifecycleSql(GroupFlowDueSql, GroupFlowOrphanRecoverySql):
 
         return int(await self.uow.run(operation))
 
-    @staticmethod
-    def _recover_judgments(conn: sqlite3.Connection, now_text: str) -> int:
+    def _recover_judgments(self, conn: sqlite3.Connection, *, now: datetime) -> int:
+        now_text = _dt(now)
         rows = list(
             conn.execute(
                 """SELECT * FROM group_flow_windows
@@ -259,31 +259,12 @@ class GroupFlowLifecycleSql(GroupFlowDueSql, GroupFlowOrphanRecoverySql):
             )
         )
         for row in rows:
-            judged_through = int(row["judge_through_message_id"] or row["last_message_id"])
-            conn.execute(
-                """UPDATE group_flow_instance_state SET last_judged_message_id = ?,
-                updated_at = ? WHERE profile_id = ? AND instance_id = ?""",
-                (
-                    judged_through,
-                    now_text,
-                    row["profile_id"],
-                    row["instance_id"],
-                ),
-            )
-            advance_group_activity_release_boundary(
+            self._return_to_collecting(
                 conn,
-                profile_id=str(row["profile_id"]),
-                instance_id=str(row["instance_id"]),
-                through_message_id=judged_through,
-                now=now_text,
-            )
-            conn.execute(
-                """UPDATE group_flow_windows SET status = 'COLLECTING',
-                judge_result = 'UNSUITABLE', judge_error_code = 'judge_lease_expired',
-                judge_threshold = MIN(4096, message_count + 1), next_judge_at = NULL,
-                lease_owner = NULL, lease_until = NULL, lease_token = lease_token + 1,
-                version = version + 1, updated_at = ? WHERE window_id = ?""",
-                (now_text, row["window_id"]),
+                row,
+                judgment_finished=True,
+                error_code="judge_lease_expired",
+                now=now,
             )
         return len(rows)
 

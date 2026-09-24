@@ -15,25 +15,31 @@ _PIPELINE = "'JUDGING','READY','RUNNING','WAITING_FIRST_ATTEMPT'"
 
 class GroupFlowJudgmentAdmissionSql:
     async def release_judgment(self, window: GroupFlowWindow, *, now: datetime) -> bool:
-        cursor = await self.db.call(
-            lambda conn: conn.execute(
-                """UPDATE group_flow_windows SET status = 'COLLECTING',
-                lease_owner = NULL, lease_until = NULL, lease_token = lease_token + 1,
-                version = version + 1, updated_at = ?
+        def operation(conn: sqlite3.Connection) -> bool:
+            current = conn.execute(
+                """SELECT * FROM group_flow_windows
                 WHERE profile_id = ? AND instance_id = ? AND window_id = ?
                   AND status = 'JUDGING' AND version = ? AND lease_token = ?""",
                 (
-                    _dt(now),
                     window.profile_id,
                     window.instance_id,
                     window.window_id,
                     window.version,
                     window.lease_token,
                 ),
-            ),
-            transaction=True,
-        )
-        return cursor.rowcount == 1
+            ).fetchone()
+            if current is None:
+                return False
+            self._return_to_collecting(
+                conn,
+                current,
+                judgment_finished=False,
+                error_code=str(current["judge_error_code"]),
+                now=now,
+            )
+            return True
+
+        return bool(await self.uow.run(operation))
 
     async def claim_judging_windows(
         self,
