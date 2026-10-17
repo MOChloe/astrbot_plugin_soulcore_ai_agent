@@ -209,11 +209,13 @@ class GroupFlowAppendSql:
         now_text: str,
     ) -> None:
         conn.execute(
-            """UPDATE group_flow_windows SET last_message_id = ?, message_count = ?,
+            """UPDATE group_flow_windows SET first_message_id = MIN(first_message_id, ?),
+            last_message_id = MAX(last_message_id, ?), message_count = ?,
             rate_ewma = ?, repeat_ratio = ?, judge_threshold = ?, next_judge_at = ?,
             quiet_due_at = ?, dynamic_due_at = ?, direct_due_at = ?, direct_address = ?,
             version = version + 1, updated_at = ? WHERE window_id = ? AND status = 'COLLECTING'""",
             (
+                message_id,
                 message_id,
                 count,
                 schedule.rate_ewma,

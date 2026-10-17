@@ -238,16 +238,21 @@ class GroupFlowSettlementSql(GroupFlowLifecycleSql):
         gap_due: datetime | None,
         now: datetime,
     ) -> None:
+        # Admission/recovery order need not match ledger ID order. Bounds must
+        # cover every member, including older messages handed off after a crash.
+        message_ids = [int(item["message_id"]) for item in members]
         conn.execute(
             """UPDATE group_flow_windows SET status = 'COLLECTING',
-            last_message_id = ?, message_count = ?, rate_ewma = ?, repeat_ratio = ?,
+            first_message_id = ?, last_message_id = ?, message_count = ?,
+            rate_ewma = ?, repeat_ratio = ?,
             judge_threshold = ?, next_judge_at = ?, quiet_due_at = ?,
             dynamic_due_at = ?, direct_due_at = ?, direct_address = ?,
             judge_result = ?, judge_error_code = ?,
             lease_owner = NULL, lease_until = NULL, lease_token = lease_token + 1,
             version = version + 1, updated_at = ? WHERE window_id = ?""",
             (
-                members[-1]["message_id"],
+                min(message_ids),
+                max(message_ids),
                 len(members),
                 schedule.rate_ewma,
                 repeat_ratio,
