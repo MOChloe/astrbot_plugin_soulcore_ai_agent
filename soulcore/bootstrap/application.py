@@ -126,7 +126,13 @@ class SoulCoreApplication:
                 if name in self._closed_cleanup_steps:
                     continue
                 try:
-                    await asyncio.wait_for(cleanup(), timeout=self._CLEANUP_STEP_TIMEOUT_SECONDS)
+                    # Inbound owns its grace deadline and then cancels/drains
+                    # admitted handlers. An equal outer deadline interrupts
+                    # that drain, leaving handlers alive and the fence held.
+                    timeout = (
+                        None if name == "inbound_admission" else self._CLEANUP_STEP_TIMEOUT_SECONDS
+                    )
+                    await asyncio.wait_for(cleanup(), timeout=timeout)
                 except TimeoutError:
                     failures.append(RuntimeError(f"cleanup step {name} exceeded its deadline"))
                 except Exception as exc:

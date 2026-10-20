@@ -30,6 +30,7 @@ from ...shared.prompt_document import (
     join_prompt_markup,
     prompt_markup_block,
 )
+from ...shared.time import utcnow
 from ..ai import current_ai_work_context
 from ..ai.service import (
     CommandExecutionResult,
@@ -1012,7 +1013,10 @@ class MainCoreTextCommandLoop(
             current_input=(
                 (request.user_message or "") if features.responsibility.has_current_message else ""
             ),
+            # Receipt time belongs to the message ledger. A queued or recovered
+            # request must not present its arrival time as the current clock.
             occurred_at=request.requested_at,
+            clock_at=utcnow(),
             timezone_name=str(getattr(collector, "timezone_name", "") or "").strip(),
             registry=registry,
             current_plan=str(collector.current_plan or ""),

@@ -226,6 +226,7 @@ class RolePlayPromptCompiler(RolePlayPromptRenderingMixin, RolePlayReferenceMixi
         current_input: str,
         occurred_at: datetime,
         registry: MainCoreCommandRegistry,
+        clock_at: datetime | None = None,
         timezone_name: str = "",
         current_plan: str = "",
         thinking_policy: MainCoreThinkingPolicy = DEFAULT_THINKING_POLICY,
@@ -262,7 +263,7 @@ class RolePlayPromptCompiler(RolePlayPromptRenderingMixin, RolePlayReferenceMixi
             main_core_mode_prompts, project_identity
         )
         current_time, situation_note, mode_guidance = self._turn_guidance(
-            occurred_at=occurred_at,
+            occurred_at=clock_at if clock_at is not None else occurred_at,
             timezone_name=timezone_name,
             responsibility=responsibility,
             items=items,
