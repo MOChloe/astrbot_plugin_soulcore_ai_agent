@@ -439,18 +439,19 @@ class ProfilesAdminController:
         return ""
 
     async def require_role_instance(self, profile_id: str, instance_id: str) -> dict[str, Any]:
+        """Validate persisted membership without querying the platform directory.
+
+        Directory names belong to list presentation. Re-fetching every friend/group
+        while validating nested page reads multiplies adapter timeouts.
+        """
         assert self.profiles_repository is not None
         raw = await self.profiles_repository.get_character_instance(profile_id, instance_id)
         if raw is not None:
             value = jsonable(raw)
-            snapshot = await self.role_instances_snapshot(profile_id)
-            for item in snapshot["instances"]:
-                if item["instance_id"] == instance_id:
-                    return {**item, **(value if isinstance(value, dict) else {})}
-        snapshot = await self.role_instances_snapshot(profile_id)
-        for item in snapshot["instances"]:
-            if item["instance_id"] == instance_id:
-                return item
+            if isinstance(value, dict):
+                item = self._instance_item(value, profile_id, {})
+                if item is not None:
+                    return {**item, **value}
         raise ValueError(f"unknown role instance_id for profile {profile_id}: {instance_id}")
 
     async def character_instance_snapshot(

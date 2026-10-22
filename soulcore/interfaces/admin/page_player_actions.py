@@ -268,9 +268,11 @@ class PlayerPageActionsMixin:
                 "problems": [],
             }
         instance_id = str(contact["instance_id"])
-        background, detail, arrangements = await asyncio.gather(
+        background, intents, arrangements = await asyncio.gather(
             self.background.workspace(profile_id, instance_id),
-            self._instance_detail(profile_id, instance_id, {"message_page_size": 5}),
+            self.timeline_repository.list_character_intents(
+                profile_id, instance_id, active_only=False, limit=20, offset=0
+            ),
             self._player_arrangements(
                 profile_id,
                 instance_id,
@@ -292,7 +294,7 @@ class PlayerPageActionsMixin:
             "contact": player_contact_view(profile_id, contact),
             "current": player_current_life_view(background.get("current_role") or {}),
             "events": player_life_events_view(background.get("timeline")),
-            "plans": player_intents_view(detail.get("character_intents")),
+            "plans": player_intents_view(jsonable(intents)),
             "arrangements": arrangements["items"],
             "arrangement_pagination": arrangements["pagination"],
             "problems": problems,
@@ -306,7 +308,7 @@ class PlayerPageActionsMixin:
         instance_id = str(contact["instance_id"])
         scope = str(contact["scope"])
         person_ref = str(payload.get("person_ref") or "").strip()
-        portrait, knowledge, policies, detail, arrangements = await asyncio.gather(
+        portrait, knowledge, policies, activity, arrangements = await asyncio.gather(
             self.player_profiles.snapshot(
                 profile_id,
                 instance_id,
@@ -315,7 +317,9 @@ class PlayerPageActionsMixin:
             ),
             self.knowledge.knowledge_snapshot(profile_id, instance_id),
             self.profile_settings.instance_contact_override_snapshot(profile_id, instance_id),
-            self._instance_detail(profile_id, instance_id, {"message_page_size": 5}),
+            self.timeline.conversation_repository.list_instance_message_activity(
+                profile_id, (instance_id,)
+            ),
             self._player_arrangements(
                 profile_id,
                 instance_id,
@@ -329,7 +333,7 @@ class PlayerPageActionsMixin:
             "contact": player_contact_view(
                 profile_id,
                 contact_projection,
-                latest_at=(detail.get("message_stats") or {}).get("latest_at"),
+                latest_at=activity.get(instance_id, {}).get("latest_at"),
                 problem_count=len(problems),
             ),
             "people": player_people_view(portrait.get("people")),
