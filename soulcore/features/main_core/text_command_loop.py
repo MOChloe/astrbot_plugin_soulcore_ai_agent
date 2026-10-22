@@ -5,12 +5,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import logging
 import uuid
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from typing import Any
+
+from astrbot.api import logger
 
 from ...contracts.ai_models import (
     AIAgentToolResult,
@@ -56,8 +57,6 @@ from .text_command_runtime import (
     MainCoreStepRejectedThreeTimes,
     TextCommandRuntimeMixin,
 )
-
-logger = logging.getLogger(__name__)
 
 
 def _projection_request(

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import sqlite3
 import threading
 from collections.abc import Callable, Sequence
@@ -10,6 +9,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TypeVar
+
+from astrbot.api import logger
 
 from ...shared.private_paths import ensure_private_directory, restrict_private_path
 from .backup import SQLiteBackupManager, infer_backup_path
@@ -31,7 +32,6 @@ from .schema.migrations import migrate_to_current
 from .write_fence import SQLiteWriteFence
 
 T = TypeVar("T")
-logger = logging.getLogger(__name__)
 _ACTIVE_TRANSACTION: ContextVar[int | None] = ContextVar(
     "soulcore_sqlite_active_transaction", default=None
 )

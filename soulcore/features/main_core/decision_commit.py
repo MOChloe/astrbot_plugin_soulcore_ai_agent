@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
+
+from astrbot.api import logger
 
 from ...contracts.models import (
     CoreRunResult,
@@ -47,8 +48,6 @@ from .expression_commit import (
 )
 from .work_continuity import known_work_resource_refs
 from .work_record_stages import MainCoreWorkRecordStageMixin
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)

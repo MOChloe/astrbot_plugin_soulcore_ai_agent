@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from typing import Any
 
+from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain
 
 from ...contracts.delivery_visibility import (
@@ -33,7 +33,6 @@ from .foreground_dispatch import (
 )
 from .umo import CapturedUMO
 
-logger = logging.getLogger(__name__)
 _UNKNOWN_SETTLEMENT_RETRY_DELAYS = (0.0, 0.05, 0.2)
 
 

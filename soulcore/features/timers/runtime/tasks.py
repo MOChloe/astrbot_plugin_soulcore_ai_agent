@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Protocol, cast
+
+from astrbot.api import logger
 
 from ....contracts.ai_models import AIErrorCode, AIErrorInfo, AIInvocationError
 from ....contracts.models import (
@@ -119,7 +120,6 @@ def _retry_key(
 
 TIMER_RUN_TASK_TYPE = "TIMER_RUN"
 TIMER_OCCUPANCY_BACKOFF_SECONDS = 30
-logger = logging.getLogger(__name__)
 
 
 class TimerTaskLeaseRepository(Protocol):

@@ -12,6 +12,8 @@ from threading import RLock
 from time import monotonic
 from typing import Any
 
+from astrbot.api import logger
+
 _CACHE_ATTRIBUTE = "_soulcore_qq_reference_id_cache"
 _REPLY_CACHE_ATTRIBUTE = "_soulcore_qq_reply_reference_cache"
 _WRAPPER_MARKER = "_soulcore_qq_reference_id_wrapper"
@@ -103,17 +105,14 @@ def bind_qq_reference_id_capture(context: Any) -> dict[str, int]:
         if isinstance(parser_map, dict) and parser_map is not state_parsers:
             parser_slots += _wrap_parser_dict(state_type, state, parser_map)
     result = {"platforms": platforms, "states": len(states), "parser_slots": parser_slots}
-    with suppress(Exception):
-        from astrbot import logger
-
-        if result["states"]:
-            logger.info(
-                "[SoulCore] QQ reference parser bridge live bind "
-                "platforms=%s states=%s parser_slots=%s",
-                result["platforms"],
-                result["states"],
-                result["parser_slots"],
-            )
+    if result["states"]:
+        logger.info(
+            "[SoulCore] QQ reference parser bridge live bind "
+            "platforms=%s states=%s parser_slots=%s",
+            result["platforms"],
+            result["states"],
+            result["parser_slots"],
+        )
     return result
 
 

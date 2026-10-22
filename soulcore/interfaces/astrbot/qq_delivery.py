@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
+
+from astrbot.api import logger
 
 from ...features.delivery.capabilities import PhysicalDeliveryReceipt
 from .capability_detection import detect_delivery_capability
 from .qq_outbound_receipts import extract_qq_message_id, extract_qq_reference_id
 from .umo import CapturedUMO
-
-logger = logging.getLogger(__name__)
 
 
 class QQDeliveryMixin:
@@ -243,10 +242,6 @@ class QQDeliveryMixin:
     ) -> None:
         """Emit deterministic QQ addressing facts without logging identifiers."""
 
-        try:
-            from astrbot.api import logger
-        except (ImportError, AttributeError):
-            return
         passive_id = str(reservation.get("message_id") or "").strip()
         cached_ids = getattr(platform, "_session_last_message_id", None)
         cached_id = (

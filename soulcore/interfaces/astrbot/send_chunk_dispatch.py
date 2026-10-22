@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import logging
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from typing import Any
+
+from astrbot.api import logger
 
 from ...features.delivery.capabilities import DeliveryCapability, PhysicalDeliveryReceipt
 from ...features.delivery.qpm import QPMDispatchFence
@@ -61,7 +62,6 @@ def merge_qq_receipt(
     )
 
 
-logger = logging.getLogger(__name__)
 PreparedPlatformCall = Callable[[], Awaitable[Any]]
 PlatformCallPreparer = Callable[[Any], Awaitable[PreparedPlatformCall]]
 

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import logging
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
+
+from astrbot.api import logger
 
 from ...shared.prompt_document import (
     TrustedPromptMarkup,
@@ -29,8 +30,6 @@ from .prompt_rendering import (
     ROLE_LOCATION_BLOCK_NAME,
     ROLE_PROFILE_BLOCK_NAME,
 )
-
-_LOG = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,7 +153,7 @@ def freeze_background_projection(
         snapshot["keyframe_frame_interval"] = source.keyframe_frame_interval
     meter = ConservativeTokenMeter()
     source_tokens = meter.count_value(snapshot)
-    _LOG.info(
+    logger.info(
         "background_prompt_projection author=%s source_tokens=%d",
         author_kind.value,
         source_tokens,
@@ -312,7 +311,7 @@ def fit_stage_markup(
         selected[position] = fitted
         dropped.append(f"{name}[部分记录]")
     result = _join_selected(expanded, selected)
-    _LOG.info(
+    logger.info(
         "background_prompt_stage author=%s stage=%s allowed_tokens=%d used_tokens=%d dropped=%s",
         author_kind.value,
         stage,

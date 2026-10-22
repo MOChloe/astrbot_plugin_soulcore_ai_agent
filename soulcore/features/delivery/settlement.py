@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from datetime import timedelta
 from typing import Any
+
+from astrbot.api import logger
 
 from ...contracts.models import OutboxItem, OutboxStatus
 from ...shared.event_log import record_event
@@ -173,9 +174,6 @@ class OutboxSettlementMixin:
         if instance is None:
             return False
         return str(instance.route_umo) == str(item.umo)
-
-
-logger = logging.getLogger(__name__)
 
 
 class OutboxDispatchSettlementMixin:

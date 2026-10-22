@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from astrbot.api import logger
+
 from ...features.delivery.transport import DeliveryStatus
 from .umo import CapturedUMO
-
-logger = logging.getLogger(__name__)
 
 
 async def drain_cancelled_settlement(pending: Awaitable[None]) -> None:

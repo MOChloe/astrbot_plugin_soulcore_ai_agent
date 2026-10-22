@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import logging
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol, cast
+
+from astrbot.api import logger
 
 from ....contracts.models import CoreRunResult, RunStatus
 from ..domain import (
@@ -28,7 +29,6 @@ from ..lifecycle import (
 
 TIMER_LIFECYCLE_REVIEW_TASK_TYPE = "TIMER_LIFECYCLE_REVIEW"
 _RECOVERY_INTERVAL = timedelta(minutes=10)
-logger = logging.getLogger(__name__)
 
 
 class TimerLifecycleRepository(Protocol):

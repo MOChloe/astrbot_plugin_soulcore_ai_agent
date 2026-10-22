@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from threading import Lock
 from typing import Any
 
-logger = logging.getLogger(__name__)
+from astrbot.api import logger
 
 
 def _iso(value: datetime | None) -> str | None:

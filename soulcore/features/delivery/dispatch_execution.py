@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
+
+from astrbot.api import logger
 
 from ...contracts.models import OutboxItem, OutboxStatus
 from ...shared.contact_runtime import (
@@ -25,8 +26,6 @@ from .settlement import OutboxDispatchSettlementMixin
 from .sticker_delivery import prepare_sticker_delivery_image
 from .transport import DeliveryMessage, DeliveryResult, DeliveryStatus
 from .voice_delivery import VoiceDeliveryMixin
-
-logger = logging.getLogger(__name__)
 
 INSTANCE_RUNTIME_DISABLED_REASON = "instance_disabled"
 INSTANCE_IMAGE_SEND_DISABLED_REASON = "instance_image_send_disabled"

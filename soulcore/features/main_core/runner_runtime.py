@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import logging
 from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack, suppress
 from datetime import timedelta
 from typing import Any
+
+from astrbot.api import logger
 
 from ...contracts.group_flow import GroupReplyRelocationCheck
 from ...contracts.initialization import (
@@ -28,8 +29,6 @@ from ...shared.event_log import record_event
 from ...shared.time import utcnow
 from ..delivery import SelfRetractionStatus
 from .ports import GroupReplyRelocationPort
-
-logger = logging.getLogger(__name__)
 
 
 async def dispatch_retraction_action(runner: Any, action: MessageRetractionAction) -> bool:

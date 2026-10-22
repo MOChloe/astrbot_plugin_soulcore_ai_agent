@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 
 from ...contracts.deferred_gate import DeferredGateCommitFence
@@ -26,8 +26,6 @@ from .umo import CapturedUMO
 _DEFERRED_FOREGROUND_LEASE_SECONDS = 180
 _BACKGROUND_FOREGROUND_LEASE_SECONDS = 180
 _FOREGROUND_CANCELLATION_TIMEOUT_SECONDS = 5.0
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)

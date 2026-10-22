@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import uuid
 from typing import Any, TypeVar
+
+from astrbot.api import logger
 
 from ...contracts.ai_models import (
     AIAudioContent,
@@ -27,7 +28,6 @@ from .voice_artifacts import (
     VoiceArtifactService,
 )
 
-logger = logging.getLogger(__name__)
 _T = TypeVar("_T")
 
 

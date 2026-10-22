@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from time import monotonic
 from typing import Any, Protocol
+
+from astrbot.api import logger
 
 from ...contracts.durable_task_context import current_durable_ai_task_id
 from ...contracts.models import CoreWakeRequest, WakeSource
@@ -23,8 +24,6 @@ from .prewarm import (
     ProactiveFrameTiming,
     proactive_frame_timing,
 )
-
-logger = logging.getLogger(__name__)
 
 _PROACTIVE_SOURCES = {WakeSource.TIMER, WakeSource.PLUGIN_WAKE}
 _TERMINAL_TASK_STATUSES = {"DEFERRED", "SUCCEEDED", "FAILED", "CANCELLED"}

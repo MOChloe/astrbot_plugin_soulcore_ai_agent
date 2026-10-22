@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import logging
 import re
 import time
 import uuid
@@ -14,6 +13,8 @@ from contextlib import suppress
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
+
+from astrbot.api import logger
 
 from ....features.background.service import (
     normalize_creative_boundary_input,
@@ -51,7 +52,6 @@ from .role_package_uploads import RolePackageUploadTransport
 _EXPORT_TTL_SECONDS = 10 * 60
 _PREVIEW_TTL_SECONDS = 30 * 60
 _SAFE_FILENAME = re.compile(r"[<>:\"/\\|?*\x00-\x1f]+")
-logger = logging.getLogger(__name__)
 
 
 class RolePackageController:

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
+
+from astrbot.api import logger
 
 from ..conversation import TURN_BUFFER_RECENT_DIALOGUE_LIMIT
 from ..conversation.ports import (
@@ -23,8 +24,6 @@ from ..profiles.ports import ProfilesRepositoryPort
 from .service import TurnBufferClassifier, TurnBufferDecision, TurnBufferMessage
 
 TurnBufferDispatch = Callable[[TurnBufferBatch, object | None], Awaitable[object | None]]
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)

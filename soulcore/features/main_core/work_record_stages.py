@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from typing import Any
+
+from astrbot.api import logger
 
 from ...contracts.ai_models import AIWorkPurpose
 from ...contracts.models import CoreWakeRequest
 from ..ai import current_ai_work_context
-
-logger = logging.getLogger(__name__)
 
 
 class MainCoreWorkRecordStageMixin:

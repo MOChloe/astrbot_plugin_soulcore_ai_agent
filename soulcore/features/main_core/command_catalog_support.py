@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import logging
 from collections.abc import Callable, Mapping, Sequence
 from functools import wraps
 from typing import Any
+
+from astrbot.api import logger
 
 from ...shared.event_log import record_event
 from ..ai.service import CommandParameter, CommandSpec
@@ -121,7 +122,7 @@ def command_outcome_handler(name: str, handler: Callable[..., Any]) -> Callable[
                     ok=False,
                     error=f"EXCEPTION_{type(exc).__name__.upper()}",
                 )
-            logging.getLogger(__name__).exception("Main Core command execution failed")
+            logger.exception("Main Core command execution failed")
             if collector.event_log is not None:
                 await record_event(
                     collector.event_log,

@@ -6,11 +6,12 @@ from this module is rendered into a model prompt.
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
+
+from astrbot.api import logger
 
 from .prewarm import (
     PROACTIVE_FRAME_GAP_MINUTES,
@@ -19,7 +20,6 @@ from .prewarm import (
 )
 
 PREDICTABLE_PROACTIVE_SOURCE_LIMIT = 100
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)

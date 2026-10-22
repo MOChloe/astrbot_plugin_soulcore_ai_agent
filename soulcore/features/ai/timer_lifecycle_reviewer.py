@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import uuid
 from dataclasses import dataclass
 from typing import Any
+
+from astrbot.api import logger
 
 from ...contracts.ai_models import (
     AIExecutionMode,
@@ -29,7 +30,6 @@ from ..timers.service import (
 )
 from .service import REQUEST_OPERATION_TIMEOUT_SECONDS_KEY, classify_generic_error
 
-logger = logging.getLogger(__name__)
 _TASK_DEFINITION = """\
 判断一个周期安排的原始目的，在刚完成这一次行动后是否已经明确结束。
 

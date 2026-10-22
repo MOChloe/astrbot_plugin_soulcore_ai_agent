@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-import logging
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Generic, Protocol, TypeVar, runtime_checkable
 
+from astrbot.api import logger
+
 from .prompt_debug import prompt_jsonable
 
 T = TypeVar("T")
-logger = logging.getLogger(__name__)
 
 
 class StructuredOutputRejectedThreeTimes(RuntimeError):

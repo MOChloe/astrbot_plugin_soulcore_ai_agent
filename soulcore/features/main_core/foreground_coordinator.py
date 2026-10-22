@@ -3,17 +3,16 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import uuid
 from typing import Any, Protocol
+
+from astrbot.api import logger
 
 from ...contracts.models import CoreRunResult, CoreWakeRequest
 from ..delivery.ports import DeliveryRepositoryPort
 from .ports import MainCoreHandlePort
 
 _FOREGROUND_LEASE_SECONDS = 180
-
-logger = logging.getLogger(__name__)
 
 
 class BackgroundTaskInterruptPort(Protocol):
