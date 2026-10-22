@@ -125,6 +125,11 @@ class SoulCoreApplication:
             for name, cleanup in self._cleanup_steps():
                 if name in self._closed_cleanup_steps:
                     continue
+                # Failed workers may still need SQLite to drain or release
+                # claims on the next close attempt. Keep their dependency
+                # alive, along with the runtime fence, until they all stop.
+                if name == "repositories" and failures:
+                    continue
                 try:
                     # Inbound owns its grace deadline and then cancels/drains
                     # admitted handlers. An equal outer deadline interrupts
