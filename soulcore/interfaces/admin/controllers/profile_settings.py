@@ -8,6 +8,7 @@ import zoneinfo
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
+from ....contracts.group_flow import GROUP_FLOW_INTEGER_LIMITS
 from ....contracts.group_wake import normalize_group_wake_rule, resolve_group_wake_rule
 from ....contracts.message_reference import normalize_private_fallback_player_name
 from ....contracts.thinking import MainCoreThinkingPolicy, thinking_policy_from_value
@@ -18,6 +19,7 @@ from ....features.profiles.ports import (
 )
 from ....features.timeline.ports import TimelineRepositoryPort
 from ....shared.event_log import record_event
+from ..console_errors import ConsoleValidationError
 from ..presentation import jsonable
 from .profiles import ProfilesAdminController
 
@@ -148,20 +150,25 @@ def optional_qpm(supplied: Mapping[str, Any], name: str) -> int | None:
 
 
 def _bounded_integer(
-    payload: Mapping[str, Any], name: str, default: int, minimum: int, maximum: int
+    payload: Mapping[str, Any], name: str, default: int, minimum: int, maximum: int | None
 ) -> int:
     raw = payload.get(name, default)
+    message = (
+        f"请输入 {minimum}～{maximum} 之间的整数。"
+        if maximum is not None
+        else f"请输入不小于 {minimum} 的整数。"
+    )
     if isinstance(raw, bool):
-        raise ValueError(f"{name} must be an integer")
+        raise ConsoleValidationError(message, field_errors={name: message})
     try:
         value = int(raw)
         numeric = float(raw)
     except (TypeError, ValueError, OverflowError) as exc:
-        raise ValueError(f"{name} must be an integer") from exc
+        raise ConsoleValidationError(message, field_errors={name: message}) from exc
     if not math.isfinite(numeric) or numeric != value:
-        raise ValueError(f"{name} must be an integer")
-    if not minimum <= value <= maximum:
-        raise ValueError(f"{name} must be between {minimum} and {maximum}")
+        raise ConsoleValidationError(message, field_errors={name: message})
+    if value < minimum or (maximum is not None and value > maximum):
+        raise ConsoleValidationError(message, field_errors={name: message})
     return value
 
 
@@ -172,12 +179,15 @@ def validate_group_flow_patch(payload: Mapping[str, Any]) -> dict[str, Any]:
             if "group_wake_rule" in payload
             else {}
         ),
-        "quiet_seconds": _bounded_integer(payload, "quiet_seconds", 30, 5, 300),
-        "base_message_count": _bounded_integer(payload, "base_message_count", 2, 1, 50),
-        "ordinary_min_reply_gap_seconds": _bounded_integer(
-            payload, "ordinary_min_reply_gap_seconds", 0, 0, 86400
-        ),
-        "judge_token_budget": _bounded_integer(payload, "judge_token_budget", 2048, 512, 8192),
+        **{
+            name: _bounded_integer(payload, name, default, *GROUP_FLOW_INTEGER_LIMITS[name])
+            for name, default in {
+                "quiet_seconds": 30,
+                "base_message_count": 2,
+                "ordinary_min_reply_gap_seconds": 0,
+                "judge_token_budget": 2048,
+            }.items()
+        },
     }
 
 
@@ -371,20 +381,24 @@ class ProfileSettingsController(InstanceOverrideActionsMixin):
         }
 
     def validate_contact_patch(self, payload: Mapping[str, Any]) -> dict[str, Any]:
-        minimum = int(self._first(payload, "check_min_minutes", default=180))
-        maximum = int(self._first(payload, "check_max_minutes", default=480))
-        self._validate_interval(minimum, maximum, "ContactClock interval")
+        minimum = _bounded_integer(payload, "check_min_minutes", 180, 1, None)
+        maximum = _bounded_integer(payload, "check_max_minutes", 480, 1, None)
+        if maximum < minimum:
+            message = "最长检查间隔不能小于最短检查间隔。"
+            raise ConsoleValidationError(message, field_errors={"check_max_minutes": message})
         quiet_start = self._text(payload, "quiet_start", default="23:00")
         quiet_end = self._text(payload, "quiet_end", default="08:00")
         for name, value in (("quiet_start", quiet_start), ("quiet_end", quiet_end)):
             if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", value):
-                raise ValueError(f"{name} must use HH:MM")
+                message = "请使用 24 小时制时间，例如 23:00。"
+                raise ConsoleValidationError(message, field_errors={name: message})
         timezone_name = self._text(payload, "timezone")
         if timezone_name:
             try:
                 zoneinfo.ZoneInfo(timezone_name)
-            except Exception as exc:
-                raise ValueError("timezone must be a valid IANA timezone") from exc
+            except (ValueError, zoneinfo.ZoneInfoNotFoundError) as exc:
+                message = "请填写有效时区，例如 Asia/Shanghai；留空则跟随运行环境。"
+                raise ConsoleValidationError(message, field_errors={"timezone": message}) from exc
 
         def optional_positive(name: str, default: int) -> int | None:
             if name not in payload:
@@ -392,16 +406,11 @@ class ProfileSettingsController(InstanceOverrideActionsMixin):
             value = payload.get(name)
             if value in (None, ""):
                 return None
-            parsed = int(value)
-            if parsed < 1:
-                raise ValueError(f"{name} must be null or a positive integer")
-            return parsed
+            return _bounded_integer(payload, name, default, 1, None)
 
-        min_gap = int(self._first(payload, "min_success_gap_minutes", default=180))
-        retry_delay = int(self._first(payload, "retry_delay_minutes", default=15))
-        retry_attempts = int(self._first(payload, "retry_max_attempts", default=3))
-        if min(min_gap, retry_delay, retry_attempts) < 1:
-            raise ValueError("contact gap and retry values must be positive integers")
+        min_gap = _bounded_integer(payload, "min_success_gap_minutes", 180, 1, None)
+        retry_delay = _bounded_integer(payload, "retry_delay_minutes", 15, 1, None)
+        retry_attempts = _bounded_integer(payload, "retry_max_attempts", 3, 1, None)
         failure_mode = self._text(payload, "failure_mode", default="SKIP").upper()
         if failure_mode not in {"SKIP", "RETRY_BACKOFF"}:
             raise ValueError("failure_mode must be SKIP or RETRY_BACKOFF")
@@ -459,12 +468,8 @@ class ProfileSettingsController(InstanceOverrideActionsMixin):
             thinking_policy=thinking_policy_from_value(profile.thinking_complexity),
         )
         contact_patch = self.validate_contact_patch(payload)
-        group_limit = int(self._first(payload, "group_send_qpm_limit", default=20))
-        if group_limit < 1:
-            raise ValueError("group_send_qpm_limit must be a positive integer")
-        send_limit = int(self._first(payload, "send_qpm_limit", default=20))
-        if send_limit < 1:
-            raise ValueError("send_qpm_limit must be a positive integer")
+        group_limit = _bounded_integer(payload, "group_send_qpm_limit", 20, 1, None)
+        send_limit = _bounded_integer(payload, "send_qpm_limit", 20, 1, None)
         group_flow_patch = self.validate_group_flow_patch(payload) if scope == "group" else None
         current_config = await self.profiles_repository.get_scope_config(profile_id, scope)
         if current_config is None:
@@ -482,9 +487,7 @@ class ProfileSettingsController(InstanceOverrideActionsMixin):
         current = await self._scope_resources(profile_id, scope)
         expected = self._expected_versions(payload, current)
         self._validate_versions(current, expected)
-        max_gate_hours = int(self._first(payload, "state_gate_max_hours", default=24))
-        if not 1 <= max_gate_hours <= 24:
-            raise ValueError("state_gate_max_hours must be between 1 and 24")
+        max_gate_hours = _bounded_integer(payload, "state_gate_max_hours", 24, 1, 24)
         await self.scope_configuration.save_scope_configuration(
             ScopeConfigurationUpdate(
                 profile_id=profile_id,

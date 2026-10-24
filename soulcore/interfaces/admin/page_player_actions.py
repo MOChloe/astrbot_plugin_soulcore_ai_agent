@@ -107,14 +107,13 @@ class PlayerPageActionsMixin:
                 "problem_count": 0,
                 "guide": guide,
             }
-        contacts = await self._player_contact_list(selected)
+        contacts = await self._player_contact_list(selected, include_live_names=False)
         requested = str(payload.get("contact_ref") or "").strip()
         selected_contact = next(
             (item["contact_ref"] for item in contacts if item["contact_ref"] == requested),
             contacts[0]["contact_ref"] if contacts else "",
         )
-        settings = await self._settings_snapshot(selected, "private")
-        readiness = self._player_readiness(settings.get("readiness"))
+        readiness = self._player_readiness(await self._readiness_snapshot(selected))
         return {
             "version": self._plugin_version(),
             "roles": roles,
@@ -137,6 +136,81 @@ class PlayerPageActionsMixin:
         return {
             **player_role_view(presentation, selected=profile_id == selected),
             "profile_name": str(row.get("name") or row.get("display_name") or "").strip(),
+        }
+
+    async def _contact_names(self, payload: dict[str, Any]) -> dict[str, Any]:
+        profile_id = await self._profile_id(payload)
+        references = set(str(payload.get("references") or "").split(",")) - {""}
+        if not references or len(references) > 50:
+            raise ValueError("请选择 1 至 50 个联系人")
+        snapshot = await self.profiles.role_instances_snapshot(profile_id, include_live_names=False)
+        selected, reference_by_id = [], {}
+        for item in snapshot["instances"]:
+            instance_id = str(item["instance_id"])
+            matches = references.intersection(
+                {instance_id, player_contact_ref(profile_id, instance_id)}
+            )
+            if matches:
+                selected.append(item)
+                reference_by_id[instance_id] = matches
+        named = await self.profiles.instance_display_names(profile_id, selected)
+        public_names = await self._public_contact_names(profile_id, named, reference_by_id)
+        return {
+            "items": [
+                {
+                    "reference": reference,
+                    **(
+                        {"display_name": public_names[reference]}
+                        if reference in public_names
+                        else {
+                            key: item[key]
+                            for key in ("display_name", "identifier_label", "identity_label")
+                        }
+                    ),
+                }
+                for item in named
+                for reference in sorted(reference_by_id[str(item["instance_id"])])
+            ]
+        }
+
+    async def _public_contact_names(
+        self,
+        profile_id: str,
+        named: list[dict[str, Any]],
+        reference_by_id: Mapping[str, set[str]],
+    ) -> dict[str, str]:
+        public = [
+            item
+            for item in named
+            if player_contact_ref(profile_id, str(item["instance_id"]))
+            in reference_by_id[str(item["instance_id"])]
+        ]
+        private_ids = [str(item["instance_id"]) for item in public if item.get("scope") != "group"]
+        activity = (
+            (
+                await self.timeline.conversation_repository.list_instance_message_activity(
+                    profile_id, tuple(private_ids)
+                )
+            )
+            if private_ids
+            else {}
+        )
+        policies = await asyncio.gather(
+            *(
+                self.profiles_repository.get_instance_chat_policy(profile_id, instance_id)
+                for instance_id in private_ids
+            )
+        )
+        by_id = dict(zip(private_ids, policies, strict=True))
+        return {
+            player_contact_ref(profile_id, str(item["instance_id"])): self._player_contact_summary(
+                profile_id,
+                item,
+                activity.get(str(item["instance_id"]), {}),
+                by_id.get(str(item["instance_id"])),
+                0,
+            )["display_name"]
+            for item in public
         }
 
     async def _player_contacts(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -440,7 +514,7 @@ class PlayerPageActionsMixin:
         *,
         required: bool = True,
     ) -> dict[str, Any] | None:
-        snapshot = await self.profiles.role_instances_snapshot(profile_id)
+        snapshot = await self.profiles.role_instances_snapshot(profile_id, include_live_names=False)
         instances = list(snapshot.get("instances") or [])
         requested = str(payload.get("contact_ref") or "").strip()
         if requested:
@@ -454,8 +528,12 @@ class PlayerPageActionsMixin:
             raise ValueError("还没有可以查看的联系人")
         return None
 
-    async def _player_contact_list(self, profile_id: str) -> list[dict[str, Any]]:
-        snapshot = await self.profiles.role_instances_snapshot(profile_id)
+    async def _player_contact_list(
+        self, profile_id: str, *, include_live_names: bool = True
+    ) -> list[dict[str, Any]]:
+        snapshot = await self.profiles.role_instances_snapshot(
+            profile_id, include_live_names=include_live_names
+        )
         instances = list(snapshot.get("instances") or [])
         instance_ids = tuple(str(item.get("instance_id") or "") for item in instances)
         activity = await self.timeline.conversation_repository.list_instance_message_activity(

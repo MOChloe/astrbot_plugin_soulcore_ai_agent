@@ -85,6 +85,19 @@ class SqliteBackgroundRepository(
     SqliteRepository,
 ):
     async def ensure_instance(self, profile_id: str, instance_id: str) -> dict[str, Any]:
+        existing = await self.db.fetch_one(
+            """SELECT instance.* FROM background_instances instance
+            WHERE instance.profile_id = ? AND instance.instance_id = ?
+              AND EXISTS (SELECT 1 FROM background_role_current_views view
+                  WHERE view.profile_id = instance.profile_id
+                    AND view.instance_id = instance.instance_id)
+              AND (SELECT COUNT(*) FROM background_author_states author
+                  WHERE author.profile_id = instance.profile_id
+                    AND author.instance_id = instance.instance_id) = ?""",
+            (profile_id, instance_id, len(BackgroundAuthorKind)),
+        )
+        if existing is not None:
+            return dict(existing)
         now = _dt(_now())
 
         def operation(conn: sqlite3.Connection) -> sqlite3.Row:
@@ -475,7 +488,7 @@ class SqliteBackgroundRepository(
     ) -> RoleCurrentView | None:
         """Return the role's lived state even while background authoring is disabled."""
 
-        return await self.uow.run(
+        return await self.db.call(
             lambda conn: self._read_role_current_view_sql(
                 conn,
                 profile_id,
@@ -490,7 +503,7 @@ class SqliteBackgroundRepository(
     ) -> MainCoreBackgroundView | None:
         """Freeze all MainCore-visible background prose in one read transaction."""
 
-        return await self.uow.run(
+        return await self.db.call(
             lambda conn: read_main_core_background_view_sql(
                 conn,
                 profile_id,
@@ -651,7 +664,7 @@ class SqliteBackgroundRepository(
                 "timeline": tuple(timeline_event_from_row(row) for row in reversed(rows)),
             }
 
-        return dict(await self.uow.run(operation))
+        return dict(await self.db.call(operation))
 
     async def query_role_visible_world_info(
         self,
@@ -686,7 +699,7 @@ class SqliteBackgroundRepository(
             ).fetchall()
             return view, tuple(timeline_event_from_row(row) for row in reversed(rows))
 
-        view, events = await self.uow.run(operation)
+        view, events = await self.db.call(operation)
         result: list[Mapping[str, str]] = []
         if view is not None:
             parts = (

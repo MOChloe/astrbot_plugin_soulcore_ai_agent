@@ -155,6 +155,12 @@ class AIConfigurationController:
         self.reload_backends = reload_backends
         self.runtime_context = runtime_context
 
+    async def readiness_packages(self, profile_id: str) -> dict[str, Any]:
+        """Reuse package rules without loading routing, health or cache diagnostics."""
+        packages = await self.repository.list_ai_api_packages(profile_id)
+        models = await self.repository.list_ai_api_models(profile_id=profile_id)
+        return {"api_packages": self._package_views(packages, models, {}, {})}
+
     async def snapshot(self, profile_id: str) -> dict[str, Any]:
         packages = await self.repository.list_ai_api_packages(profile_id)
         models = await self.repository.list_ai_api_models(profile_id=profile_id)

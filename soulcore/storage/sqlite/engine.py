@@ -4,7 +4,8 @@ import asyncio
 import sqlite3
 import threading
 from collections.abc import Callable, Sequence
-from contextvars import ContextVar
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import ContextVar, copy_context
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -98,7 +99,12 @@ class BackupPublicationWarning:
 
 
 class SqliteEngine:
-    """Single-connection async SQLite lifecycle with serialized operations."""
+    """WAL snapshot reads isolated from serialized writes and backup publication.
+
+    Each connection has its own bounded worker, independent of the event loop's
+    executor used by blocking provider requests. In-memory databases retain one
+    connection because a second connection would address a different database.
+    """
 
     def __init__(
         self,
@@ -109,7 +115,11 @@ class SqliteEngine:
     ) -> None:
         self.path = str(path)
         self._connection: sqlite3.Connection | None = None
+        self._read_connection: sqlite3.Connection | None = None
+        self._executor: ThreadPoolExecutor | None = None
+        self._read_executor: ThreadPoolExecutor | None = None
         self._lock = asyncio.Lock()
+        self._read_lock = asyncio.Lock()
         self._lifecycle_lock = asyncio.Lock()
         self._last_backup_warning: BackupPublicationWarning | None = None
         self._secured_database_files: dict[Path, tuple[int, int]] = {}
@@ -140,7 +150,14 @@ class SqliteEngine:
 
     async def open(self) -> SqliteEngine:
         async with self._lifecycle_lock:
-            return await self._open_locked()
+            try:
+                return await self._open_locked()
+            except BaseException as open_error:
+                try:
+                    await self._close_locked()
+                except BaseException as close_error:
+                    raise open_error from close_error
+                raise
 
     async def _open_locked(self) -> SqliteEngine:
         if self._connection is not None:
@@ -149,7 +166,15 @@ class SqliteEngine:
         await self._restore_explicit_backup_if_needed()
         connection, changed = await self._open_connection_for_lifecycle()
         self._connection = connection
-        return await self._publish_open_backup_or_close(changed)
+        if self.path != ":memory:":
+            self._read_connection = await self._run_blocking(
+                self._open_read_connection,
+                read_only=True,
+                cancelled_result_disposer=lambda result: result.close(),
+            )
+        if self._managed_backup_needs_publication(changed):
+            await self.publish_backup_after_commit(operation="database_open")
+        return self
 
     async def _prepare_managed_storage(self) -> None:
         if self.path != ":memory:":
@@ -196,16 +221,20 @@ class SqliteEngine:
                 database_path=self.path,
             ) from exc
 
-    async def _publish_open_backup_or_close(self, changed: bool) -> SqliteEngine:
+    def _open_read_connection(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(
+            Path(self.path).resolve().as_uri() + "?mode=ro",
+            uri=True,
+            check_same_thread=False,
+            isolation_level=None,
+        )
         try:
-            if self._managed_backup_needs_publication(changed):
-                await self.publish_backup_after_commit(operation="database_open")
-            return self
-        except BaseException as open_error:
-            try:
-                await self._close_locked()
-            except BaseException as close_error:
-                raise open_error from close_error
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA busy_timeout=5000")
+            connection.execute("PRAGMA query_only=ON")
+            return connection
+        except BaseException:
+            connection.close()
             raise
 
     def _open_initialized_connection(self) -> tuple[sqlite3.Connection, bool]:
@@ -352,28 +381,50 @@ class SqliteEngine:
             await self._close_locked()
 
     async def _close_locked(self) -> None:
-        async with self._lock:
-            connection = self._connection
-            if connection is None:
-                return
-            close_completed = threading.Event()
+        # Drain both lanes before releasing either connection or its executor.
+        # Cancellation does not relinquish a connection still used by a worker.
+        async with self._read_lock, self._lock:
+            first_error: BaseException | None = None
+            for name, read_only in (("_read_connection", True), ("_connection", False)):
+                connection = getattr(self, name)
+                if connection is None:
+                    continue
+                close_completed = threading.Event()
 
-            def close_connection() -> None:
-                connection.close()
-                close_completed.set()
+                def close_connection(
+                    connection: sqlite3.Connection = connection,
+                    close_completed: threading.Event = close_completed,
+                ) -> None:
+                    connection.close()
+                    close_completed.set()
 
-            try:
-                await self._run_blocking(close_connection)
-            finally:
-                if close_completed.is_set():
-                    self._connection = None
+                try:
+                    await self._run_blocking(close_connection, read_only=read_only)
+                except BaseException as exc:
+                    first_error = first_error or exc
+                finally:
+                    if close_completed.is_set():
+                        setattr(self, name, None)
+            if self._connection is None and self._read_connection is None:
+                for executor in (self._executor, self._read_executor):
+                    if executor is not None:
+                        executor.shutdown(wait=False)
+                self._executor = self._read_executor = None
+            if first_error is not None:
+                raise first_error
 
     async def backup(self) -> Path | None:
         """Create an atomic, consistent snapshot of the open database."""
 
         if self.backup_manager is None:
             return None
-        return await self.call(self.backup_manager.backup_connection)
+        # Keep the write fence through database and artifact publication, while
+        # the independent WAL reader continues to serve committed data.
+        async with self._lock:
+            connection = self._require_connection()
+            return await self._run_blocking(
+                lambda: self.backup_manager.backup_connection(connection)
+            )
 
     async def publish_backup_after_commit(
         self,
@@ -438,7 +489,8 @@ class SqliteEngine:
 
     async def invalidate_backup(self) -> None:
         if self.backup_manager is not None:
-            await self._run_blocking(self.backup_manager.remove_backup)
+            async with self._lock:
+                await self._run_blocking(self.backup_manager.remove_backup)
 
     async def _invalidate_backup_uncancellable(
         self,
@@ -501,6 +553,15 @@ class SqliteEngine:
             raise RuntimeError(
                 "SQLite transactions are non-reentrant; execute all SQL in one callback"
             )
+        if not transaction and self.path != ":memory:":
+            async with self._read_lock:
+                self._require_connection()
+                connection = self._read_connection
+                if connection is None:
+                    raise RuntimeError("Database reader is not open")
+                return await self._run_blocking(
+                    lambda: self._invoke_read_only(connection, operation), read_only=True
+                )
         async with self._lock:
             connection = self._require_connection()
 
@@ -538,11 +599,15 @@ class SqliteEngine:
                 )
             return sqlite3.SQLITE_DENY if action in _WRITE_AUTHORIZER_ACTIONS else sqlite3.SQLITE_OK
 
+        # One callback observes one committed snapshot even if it performs
+        # several SELECTs while another connection commits a transaction.
+        connection.execute("BEGIN")
         connection.set_authorizer(deny_writes)
         try:
             return operation(connection)
         finally:
             connection.set_authorizer(None)
+            connection.rollback()
 
     @staticmethod
     def _invoke_transaction(
@@ -557,15 +622,29 @@ class SqliteEngine:
             connection.rollback()
             raise
 
-    @staticmethod
     async def _run_blocking(
+        self,
         operation: Callable[[], T],
         *,
+        read_only: bool = False,
         cancelled_result_disposer: Callable[[T], None] | None = None,
     ) -> T:
         """Keep ownership until a submitted thread finishes, even after cancellation."""
 
-        worker = asyncio.create_task(asyncio.to_thread(operation))
+        if read_only:
+            if self._read_executor is None:
+                self._read_executor = ThreadPoolExecutor(
+                    max_workers=1, thread_name_prefix="soulcore-sqlite-read"
+                )
+            executor = self._read_executor
+        else:
+            if self._executor is None:
+                self._executor = ThreadPoolExecutor(
+                    max_workers=1, thread_name_prefix="soulcore-sqlite-write"
+                )
+            executor = self._executor
+        loop = asyncio.get_running_loop()
+        worker = loop.run_in_executor(executor, copy_context().run, operation)
         cancellation: asyncio.CancelledError | None = None
         while not worker.done():
             try:
@@ -585,7 +664,7 @@ class SqliteEngine:
             raise
         if cancellation is not None:
             if cancelled_result_disposer is not None:
-                disposer = asyncio.create_task(asyncio.to_thread(cancelled_result_disposer, result))
+                disposer = loop.run_in_executor(executor, cancelled_result_disposer, result)
                 while not disposer.done():
                     try:
                         await asyncio.shield(disposer)

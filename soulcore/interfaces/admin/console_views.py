@@ -88,13 +88,10 @@ def issue_view(
 
 def readiness_view(
     main_config: Mapping[str, Any],
-    character_model: Mapping[str, Any],
     ai_packages: Mapping[str, Any],
-    thinking: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Explain whether the selected profile can run the main conversation path."""
 
-    del thinking
     main = _mapping(main_config)
     all_chat_models = _ready_chat_models(ai_packages)
     model_ready = bool(all_chat_models)

@@ -374,8 +374,14 @@ class TimerLifecycleSqliteMixin:
     ) -> tuple[TimerLifecycleReview, ...]:
         bounded = max(1, min(64, int(limit)))
         stamp = encode_datetime(require_aware(now))
+        pending = await self.db.fetch_one(
+            "SELECT 1 FROM timer_lifecycle_reviews WHERE status = 'PENDING' LIMIT 1"
+        )
+        if pending is None:
+            return ()
 
-        def operation(conn: sqlite3.Connection) -> tuple[TimerLifecycleReview, ...]:
+        def operation(conn: sqlite3.Connection) -> tuple[tuple[TimerLifecycleReview, ...], bool]:
+            changes_before = conn.total_changes
             conn.execute(
                 """UPDATE timer_lifecycle_reviews AS review
                 SET status = 'SKIPPED', error_code = 'OCCURRENCE_NOT_COMPLETED',
@@ -480,10 +486,11 @@ class TimerLifecycleSqliteMixin:
                 selected.append(_decode_review(row))
                 if len(selected) >= bounded:
                     break
-            return tuple(selected)
+            return tuple(selected), conn.total_changes != changes_before
 
-        result = await self.uow.run(operation)
-        await self.db.publish_backup_after_commit()
+        result, changed = await self.uow.run(operation)
+        if changed:
+            await self.db.publish_backup_after_commit()
         return result
 
     async def apply_lifecycle_review_result(
@@ -514,10 +521,15 @@ class TimerLifecycleSqliteMixin:
     ) -> tuple[TimerLifecycleReview, ...]:
         bounded = max(1, min(16, int(limit)))
         stamp = require_aware(now)
-        result = await self.uow.run(
-            lambda conn: self._recover_lifecycle_review_candidates(conn, bounded, stamp)
-        )
-        await self.db.publish_backup_after_commit()
+
+        def operation(conn: sqlite3.Connection) -> tuple[tuple[TimerLifecycleReview, ...], bool]:
+            changes_before = conn.total_changes
+            reviews = self._recover_lifecycle_review_candidates(conn, bounded, stamp)
+            return reviews, conn.total_changes != changes_before
+
+        result, changed = await self.uow.run(operation)
+        if changed:
+            await self.db.publish_backup_after_commit()
         return result
 
     async def timer_lifecycle_snapshot(self, scope: TimerScope) -> dict[str, Any]:

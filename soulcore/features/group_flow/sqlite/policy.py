@@ -19,6 +19,12 @@ _POLICY_FIELDS = {
 class GroupFlowPolicySql:
     async def get_group_flow_policy(self, profile_id: str, scope: str = "group") -> GroupFlowPolicy:
         normalized = self._validate_scope(profile_id, scope)
+        existing = await self.db.fetch_one(
+            "SELECT * FROM group_flow_policies WHERE profile_id = ? AND scope = 'group'",
+            (normalized,),
+        )
+        if existing is not None:
+            return self._policy(existing)
         now = _dt(_now())
         await self.db.call(
             lambda conn: conn.execute(

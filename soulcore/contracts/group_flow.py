@@ -9,6 +9,13 @@ from enum import StrEnum
 
 from .group_wake import default_group_wake_rule, normalize_group_wake_rule
 
+GROUP_FLOW_INTEGER_LIMITS: Mapping[str, tuple[int, int]] = {
+    "quiet_seconds": (5, 300),
+    "base_message_count": (1, 50),
+    "ordinary_min_reply_gap_seconds": (0, 86400),
+    "judge_token_budget": (512, 8192),
+}
+
 
 class GroupFlowStatus(StrEnum):
     COLLECTING = "COLLECTING"
@@ -39,14 +46,15 @@ class GroupFlowPolicy:
         object.__setattr__(self, "group_wake_rule", normalize_group_wake_rule(self.group_wake_rule))
         if not self.profile_id.strip() or self.scope != "group":
             raise ValueError("group flow policy requires a group profile")
-        if not 5 <= self.quiet_seconds <= 300:
-            raise ValueError("quiet_seconds must be between 5 and 300")
-        if not 1 <= self.base_message_count <= 50:
-            raise ValueError("base_message_count must be between 1 and 50")
-        if not 0 <= self.ordinary_min_reply_gap_seconds <= 86400:
-            raise ValueError("ordinary_min_reply_gap_seconds must be between 0 and 86400")
-        if not 512 <= self.judge_token_budget <= 8192:
-            raise ValueError("judge_token_budget must be between 512 and 8192")
+        for name, value in {
+            "quiet_seconds": self.quiet_seconds,
+            "base_message_count": self.base_message_count,
+            "ordinary_min_reply_gap_seconds": self.ordinary_min_reply_gap_seconds,
+            "judge_token_budget": self.judge_token_budget,
+        }.items():
+            minimum, maximum = GROUP_FLOW_INTEGER_LIMITS[name]
+            if not minimum <= value <= maximum:
+                raise ValueError(f"{name} must be between {minimum} and {maximum}")
         if self.version < 1:
             raise ValueError("policy version must be positive")
 

@@ -338,6 +338,12 @@ WORLD_DEFINITION_FIELDS = (
 class SettingsPageActionsMixin:
     """Keep settings snapshot and save orchestration out of the root page router."""
 
+    async def _readiness_snapshot(self, profile_id: str) -> dict[str, Any]:
+        """Read only dependencies of chat readiness, never the whole editor."""
+        enabled = await self.profiles_repository.get_profile_soulcore_enabled(profile_id)
+        packages = await self.ai.configuration.readiness_packages(profile_id)
+        return readiness_view({"enabled": enabled}, packages)
+
     async def _settings_snapshot_action(self, payload: dict[str, Any]) -> dict[str, Any]:
         profile_id, scope = await self._scope(payload)
         return await self._settings_snapshot(profile_id, scope, world_paging=payload)
@@ -400,7 +406,7 @@ class SettingsPageActionsMixin:
         return {
             "profile_id": profile_id,
             "scope": scope,
-            "readiness": readiness_view(main, character, ai_packages, thinking),
+            "readiness": readiness_view(main, ai_packages),
             "sections": sections,
             "identity_confirmation_tokens": identity_ui.initial_settings_grants(
                 self.identity_confirmations,
@@ -451,7 +457,7 @@ class SettingsPageActionsMixin:
         readiness = None
         if section in {"main", "character", "thinking"}:
             try:
-                readiness = (await self._settings_snapshot(profile_id, scope))["readiness"]
+                readiness = await self._readiness_snapshot(profile_id)
             except Exception:
                 if section != "thinking":
                     raise
@@ -810,6 +816,7 @@ class AdminPageController(
             "advanced_guide_acknowledge": self._advanced_guide_acknowledge,
             "player_now": self._player_now,
             "player_contacts": self._player_contacts,
+            "contact_names": self._contact_names,
             "player_history": self._player_history,
             "player_history_record": self._player_history_record,
             "player_relationship": self._player_relationship,
@@ -1005,7 +1012,7 @@ class AdminPageController(
                     "issues": [],
                 },
             }
-        settings = await self._settings_snapshot(selected, scope)
+        readiness = await self._readiness_snapshot(selected)
         instances = await self.profiles.role_instances_page(
             selected,
             scope,
@@ -1025,7 +1032,7 @@ class AdminPageController(
             "instances": instances["instances"],
             "instance_pagination": instances["pagination"],
             "advanced_guide": advanced_guide,
-            "readiness": settings["readiness"],
+            "readiness": readiness,
         }
 
     async def _instance_workspace(self, payload: dict[str, Any]) -> dict[str, Any]:

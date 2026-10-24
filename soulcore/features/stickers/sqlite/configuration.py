@@ -310,6 +310,12 @@ class StickerConfigurationRecords:
 
     async def get_sticker_config(self, profile_id: str, scope: str) -> StickerConfig:
         self._validate_scope(scope)
+        existing = await self.db.fetch_one(
+            "SELECT * FROM sticker_configs WHERE profile_id = ? AND scope = ?",
+            (profile_id, scope),
+        )
+        if existing is not None:
+            return self._sticker_config(existing)
         now = _dt(_now())
 
         def operation(conn: sqlite3.Connection) -> sqlite3.Row:
@@ -565,6 +571,12 @@ class StickerConfigurationRecords:
         profile_id: str,
         instance_id: str,
     ) -> dict[str, Any]:
+        existing = await self.db.fetch_one(
+            "SELECT * FROM sticker_trigger_states WHERE profile_id = ? AND instance_id = ?",
+            (profile_id, instance_id),
+        )
+        if existing is not None:
+            return self._sticker_trigger_state(existing)
         now = _dt(_now())
 
         def operation(conn: sqlite3.Connection) -> sqlite3.Row:

@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from ....features.group_flow.ports import GroupFlowRepository
     from ....features.turn_buffer.worker import TurnBufferWorker
 
+from ....contracts.group_flow import GROUP_FLOW_INTEGER_LIMITS
 from ....features.files.ports import FileRepositoryPort
 from ....features.profiles.ports import ProfilesRepositoryPort
 from ....features.timeline.ports import TimelineRepositoryPort
@@ -249,7 +250,13 @@ class ProfilesAdminController:
                 timezone_state,
                 jsonable(group_flow) if group_flow is not None else {},
                 scope_config_version,
-            )
+            ),
+            "field_constraints": {
+                name: {"min": minimum, "max": maximum, "step": 1, "required": True}
+                for name, (minimum, maximum) in GROUP_FLOW_INTEGER_LIMITS.items()
+            }
+            if scope == "group"
+            else {},
         }
 
     @classmethod
@@ -311,14 +318,20 @@ class ProfilesAdminController:
         value = values.get(key)
         return default if value in (None, "") else value
 
-    async def role_instances_snapshot(self, profile_id: str) -> dict[str, Any]:
+    async def role_instances_snapshot(
+        self, profile_id: str, *, include_live_names: bool = True
+    ) -> dict[str, Any]:
         """Expose stable conversation instances, grouped for the settings page."""
 
         assert self.profiles_repository is not None
         raw_items = await self.profiles_repository.list_character_instances(profile_id)
         serialized = self._serialized_instances(raw_items)
         directory_items = [self._directory_entry(value) for value in serialized]
-        live_names = await live_instance_display_names(self.context, directory_items)
+        live_names = (
+            await live_instance_display_names(self.context, directory_items)
+            if include_live_names
+            else {}
+        )
         private: list[dict[str, Any]] = []
         groups: list[dict[str, Any]] = []
         for value in serialized:
@@ -365,14 +378,10 @@ class ProfilesAdminController:
             offset=(page - 1) * size,
         )
         serialized = self._serialized_instances(raw_items)
-        live_names = await live_instance_display_names(
-            self.context,
-            [self._directory_entry(value) for value in serialized],
-        )
         items = [
             item
             for value in serialized
-            if (item := self._instance_item(value, profile_id, live_names)) is not None
+            if (item := self._instance_item(value, profile_id, {})) is not None
         ]
         return {
             "profile_id": profile_id,
@@ -386,6 +395,17 @@ class ProfilesAdminController:
                 "has_more": page < page_count,
             },
         }
+
+    async def instance_display_names(
+        self, profile_id: str, instances: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Optional platform labels, loaded independently of configuration/state."""
+        names = await live_instance_display_names(self.context, instances)
+        return [
+            item
+            for value in instances
+            if (item := self._instance_item(value, profile_id, names)) is not None
+        ]
 
     @staticmethod
     def _serialized_instances(raw_items: list[Any]) -> list[dict[str, Any]]:

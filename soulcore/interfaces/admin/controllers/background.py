@@ -61,7 +61,8 @@ class BackgroundAdminController:
             ),
             "background workspace",
         )
-        return _workspace_view(source)
+        life = await self.repository.quick_setup_life_snapshot(profile_id)
+        return {**_workspace_view(source), "enabled": bool(life["enabled"])}
 
     async def world_snapshot(
         self,

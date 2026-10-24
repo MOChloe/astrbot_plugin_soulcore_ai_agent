@@ -233,7 +233,7 @@ class ProfileRecords:
                 if existing is None:
                     raise
 
-        await self.uow.run(lambda conn: _assert_profile_companion_rows(conn, existing.profile_id))
+        await self.db.call(lambda conn: _assert_profile_companion_rows(conn, existing.profile_id))
         if name and existing.name != name:
             return await self.update_profile(profile_id, name=name)
         return existing
@@ -399,6 +399,14 @@ class ProfileRecords:
         return assignments, parameters
 
     async def mark_orphaned_except(self, active_profile_ids: set[str]) -> int:
+        # Console reads reconcile AstrBot's profile directory. An unchanged
+        # directory needs no write transaction and must not wait for backups.
+        rows = await self.db.fetch_all("SELECT profile_id, orphaned FROM role_profiles")
+        if all(
+            bool(row["orphaned"]) == (str(row["profile_id"]) not in active_profile_ids)
+            for row in rows
+        ):
+            return 0
         now = _dt(_now())
 
         def operation(conn: sqlite3.Connection) -> int:
