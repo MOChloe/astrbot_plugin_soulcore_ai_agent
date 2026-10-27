@@ -389,8 +389,12 @@ class DeliveryTransport(
             qq_environment=qq_environment,
             qq_account_tier=qq_account_tier,
         )
-        qq_text = self._qq_text_parts(chain) if capability.qq_official else None
-        sender_override = self._group_quote_sender(
+        qq_text = (
+            self._qq_text_parts(chain, allow_group_mentions=captured.kind.value == "group")
+            if capability.qq_official
+            else None
+        )
+        sender_override = self._group_addressed_sender(
             platform, captured, qq_text, capability.qq_official
         )
         if (
@@ -419,7 +423,7 @@ class DeliveryTransport(
                 return DeliveryResult.accepted_unconfirmed("platform_call_fence_already_started")
             receipt = await sender_override(chain)
             return DeliveryResult.accepted_unconfirmed(
-                "qq_group_quote_api_accepted_unconfirmed",
+                "qq_group_addressed_api_accepted_unconfirmed",
                 receipts=(receipt,),
             )
         if self._uses_qq_friend_api(platform, captured) and qq_text is not None:
@@ -443,10 +447,15 @@ class DeliveryTransport(
             platform, captured, chain, before_platform_call=before_platform_call
         )
 
-    def _group_quote_sender(
+    def _group_addressed_sender(
         self, platform: Any, captured: CapturedUMO, qq_text: Any, qq_official: bool
     ) -> Any | None:
-        if not qq_official or captured.kind.value != "group" or not qq_text or not qq_text[1]:
+        if (
+            not qq_official
+            or captured.kind.value != "group"
+            or not qq_text
+            or not qq_text.addressed
+        ):
             return None
 
         async def sender(chunk: Any) -> PhysicalDeliveryReceipt:

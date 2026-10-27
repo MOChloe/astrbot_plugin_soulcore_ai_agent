@@ -139,7 +139,9 @@ class EventDeliveryMixin:
         def _coerce_message_chain(self, value: Any) -> Any: ...
         def _find_platform(self, platform_id: str | None) -> Any | None: ...
         def _is_platform_running(self, platform: Any) -> bool: ...
-        def _qq_text_parts(self, message_chain: Any) -> Any: ...
+        def _qq_text_parts(
+            self, message_chain: Any, *, allow_group_mentions: bool = False
+        ) -> Any: ...
         async def _send_qq_group(
             self, platform: Any, captured: CapturedUMO, message_chain: Any
         ) -> PhysicalDeliveryReceipt: ...
@@ -260,7 +262,7 @@ class EventDeliveryMixin:
         capability = detect_delivery_capability(
             platform, qq_environment=qq_environment, qq_account_tier=qq_account_tier
         )
-        sender_override = self._quoted_group_sender(platform, captured, chain, capability)
+        sender_override = self._addressed_group_sender(platform, captured, chain, capability)
         coordinated = await coordinator.send_event(
             event,
             platform,
@@ -296,11 +298,15 @@ class EventDeliveryMixin:
             return DeliveryResult.deferred(status, coordinated.detail)
         return DeliveryResult.failed(coordinated.detail, platform_found=True)
 
-    def _quoted_group_sender(
+    def _addressed_group_sender(
         self, platform: Any, captured: CapturedUMO, chain: Any, capability: Any
     ) -> Any | None:
-        qq_text = self._qq_text_parts(chain) if capability.qq_official else None
-        if qq_text is None or not qq_text[1]:
+        qq_text = (
+            self._qq_text_parts(chain, allow_group_mentions=True)
+            if capability.qq_official
+            else None
+        )
+        if qq_text is None or not qq_text.addressed:
             return None
 
         async def sender(chunk: Any) -> PhysicalDeliveryReceipt:
@@ -330,9 +336,17 @@ class EventDeliveryMixin:
                 chain,
                 before_platform_call=before_platform_call,
             )
-        quoted = self._qq_text_parts(chain) if capability.qq_official else None
-        if quoted is not None and quoted[1] and captured.kind.value in {"friend", "group"}:
-            return await self._send_quoted_event(
+        addressed = (
+            self._qq_text_parts(chain, allow_group_mentions=captured.kind.value == "group")
+            if capability.qq_official
+            else None
+        )
+        if (
+            addressed is not None
+            and addressed.addressed
+            and captured.kind.value in {"friend", "group"}
+        ):
+            return await self._send_addressed_event(
                 platform,
                 captured,
                 chain,
@@ -348,7 +362,7 @@ class EventDeliveryMixin:
             before_platform_call=before_platform_call,
         )
 
-    async def _send_quoted_event(
+    async def _send_addressed_event(
         self,
         platform: Any,
         captured: CapturedUMO,
@@ -363,7 +377,7 @@ class EventDeliveryMixin:
                 return DeliveryResult.accepted_unconfirmed("platform_call_fence_already_started")
             receipt = await self._send_qq_group(platform, captured, chain)
             return DeliveryResult.accepted_unconfirmed(
-                "qq_group_quote_api_accepted_unconfirmed",
+                "qq_group_addressed_api_accepted_unconfirmed",
                 receipts=(receipt,),
             )
         detail, receipts = await self._send_qq_friend(

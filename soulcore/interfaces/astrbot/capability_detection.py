@@ -43,7 +43,7 @@ def detect_delivery_capability(
         qq_account_identity=account_identity,
         account_identity_confirmed=bool(account_identity),
         quote=qq_official or onebot,
-        mention=onebot,
+        mention=qq_official or onebot,
         retract_self=qq_official or onebot,
         returns_id=qq_official or onebot,
         inbound_recall_notice=onebot,

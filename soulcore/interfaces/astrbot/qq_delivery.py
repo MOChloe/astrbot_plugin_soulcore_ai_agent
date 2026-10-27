@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from html import escape
 from typing import Any
 
 from astrbot.api import logger
@@ -12,6 +14,32 @@ from ...features.delivery.capabilities import PhysicalDeliveryReceipt
 from .capability_detection import detect_delivery_capability
 from .qq_outbound_receipts import extract_qq_message_id, extract_qq_reference_id
 from .umo import CapturedUMO
+
+
+@dataclass(frozen=True, slots=True)
+class QQTextParts:
+    content: str
+    quote_id: str | None
+    has_mentions: bool = False
+
+    @property
+    def addressed(self) -> bool:
+        return bool(self.quote_id or self.has_mentions)
+
+
+def _qq_text_component(component: Any, *, with_mentions: bool) -> str | None:
+    name = component.__class__.__name__.lower()
+    if name in {"plain", "text"}:
+        text = str(getattr(component, "text", ""))
+        return escape(text, quote=False) if with_mentions else text
+    if name == "at" and with_mentions:
+        member_id = str(component.qq).strip()
+        if not member_id or member_id == "all":
+            raise ValueError("qq_group_member_mention_requires_member_openid")
+        return f'<qqbot-at-user id="{escape(member_id, quote=True)}" /> '
+    if with_mentions:
+        raise ValueError("qq_group_mention_requires_text_components")
+    return None
 
 
 class QQDeliveryMixin:
@@ -32,31 +60,41 @@ class QQDeliveryMixin:
         return name in {"qq_official", "qq_official_webhook"}
 
     @staticmethod
-    def _qq_text_parts(message_chain: Any) -> tuple[str, str | None] | None:
-        """Return text and one native quote target for a QQ Official chain."""
+    def _qq_text_parts(
+        message_chain: Any, *, allow_group_mentions: bool = False
+    ) -> QQTextParts | None:
+        """Map typed group mentions to QQ's Markdown-only member-openid tags.
+
+        AstrBot's ordinary QQ chain parser discards At components. Keep this
+        mapping at the transport boundary; model text cannot create native tags.
+        """
 
         components = getattr(message_chain, "chain", message_chain)
         if not isinstance(components, (list, tuple)):
             return None
+        has_mentions = allow_group_mentions and any(
+            component.__class__.__name__.lower() == "at" for component in components
+        )
         text_parts: list[str] = []
         quote_id: str | None = None
         for component in components:
             name = component.__class__.__name__.lower()
-            if name in {"plain", "text"}:
-                text_parts.append(str(getattr(component, "text", "")))
-                continue
             if name == "reply":
                 candidate = str(
                     getattr(component, "id", None) or getattr(component, "message_id", None) or ""
                 ).strip()
                 if not candidate or quote_id is not None:
+                    if has_mentions:
+                        raise ValueError("qq_group_mention_invalid_reply_target")
                     return None
                 quote_id = candidate
                 continue
-            # QQ Official group member mentions are intentionally unsupported.
-            return None
+            text = _qq_text_component(component, with_mentions=has_mentions)
+            if text is None:
+                return None
+            text_parts.append(text)
         content = "".join(text_parts)
-        return (content, quote_id) if content else None
+        return QQTextParts(content, quote_id, has_mentions) if content else None
 
     async def _send_qq_friend(
         self,
@@ -72,7 +110,7 @@ class QQDeliveryMixin:
         parsed = self._qq_text_parts(message_chain)
         if parsed is None:
             raise ValueError("qq_wakeup_requires_plain_text")
-        content, quote_id = parsed
+        content, quote_id = parsed.content, parsed.quote_id
 
         route = self._qq_route("POST", "/v2/users/{openid}/messages", openid=captured.target_id)
 
@@ -270,24 +308,27 @@ class QQDeliveryMixin:
         message_chain: Any,
     ) -> PhysicalDeliveryReceipt:
         assert captured.target_id is not None
-        parsed = self._qq_text_parts(message_chain)
-        if parsed is None or not parsed[1]:
-            raise ValueError("qq_group_native_quote_requires_text_and_reply")
-        content, quote_id = parsed
+        parsed = self._qq_text_parts(message_chain, allow_group_mentions=True)
+        if parsed is None or not parsed.addressed:
+            raise ValueError("qq_group_native_addressing_requires_text_and_target")
         route = self._qq_route(
             "POST",
             "/v2/groups/{group_openid}/messages",
             group_openid=captured.target_id,
         )
-        payload = {
-            "content": content,
-            "msg_type": 0,
+        payload: dict[str, Any] = {
+            "msg_type": 2 if parsed.has_mentions else 0,
             "msg_seq": 1,
-            "message_reference": {
-                "message_id": quote_id,
-                "ignore_get_message_error": False,
-            },
         }
+        if parsed.has_mentions:
+            payload["markdown"] = {"content": parsed.content}
+        else:
+            payload["content"] = parsed.content
+        if parsed.quote_id:
+            payload["message_reference"] = {
+                "message_id": parsed.quote_id,
+                "ignore_get_message_error": False,
+            }
         response = await self._qq_request(platform, route, json=payload)
         message_id = self._extract_message_id(response)
         reference_id = self._extract_reference_id(response)
