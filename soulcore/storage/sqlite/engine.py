@@ -15,6 +15,7 @@ from astrbot.api import logger
 
 from ...shared.private_paths import ensure_private_directory, restrict_private_path
 from .backup import SQLiteBackupManager, infer_backup_path
+from .data_layout import relocate_managed_payloads
 from .schema.current import (
     CURRENT_SCHEMA_VERSION,
     SchemaRecoveryReason,
@@ -180,6 +181,7 @@ class SqliteEngine:
         if self.path != ":memory:":
             ensure_private_directory(Path(self.path).parent)
             self._harden_database_family()
+            await self._run_blocking(lambda: relocate_managed_payloads(self.path))
         if self.backup_manager is None:
             return
         await self._run_blocking(self.backup_manager.harden_existing_backups)

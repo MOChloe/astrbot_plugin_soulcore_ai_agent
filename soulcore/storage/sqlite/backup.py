@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
+from ...shared.data_paths import infer_backup_path
 from ...shared.private_paths import (
     create_private_file,
     ensure_private_directory,
@@ -23,24 +24,6 @@ from ...shared.private_paths import (
 )
 from .artifact_backup import FileArtifactBackupStore, PreparedArtifactRestore
 from .write_fence import SQLiteWriteFence
-
-
-def infer_backup_path(database_path: str | Path) -> Path | None:
-    """Return the stable data-root backup path for a plugin_data database."""
-    path = Path(database_path)
-    if str(path) == ":memory:":
-        return None
-    resolved = path.resolve(strict=False)
-    parts = resolved.parts
-    indexes = [index for index, part in enumerate(parts) if part.lower() == "plugin_data"]
-    if not indexes:
-        return None
-    index = indexes[-1]
-    if index + 1 >= len(parts):
-        return None
-    data_root = Path(*parts[:index])
-    plugin_name = parts[index + 1]
-    return data_root / "soulcore_backups" / plugin_name / resolved.name
 
 
 class SQLiteBackupManager:

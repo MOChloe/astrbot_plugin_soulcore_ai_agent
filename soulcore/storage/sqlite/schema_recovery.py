@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ...shared.data_paths import infer_media_root
 from .backup import SQLiteBackupManager, infer_backup_path
 from .schema.current import SchemaRecoveryReason, SchemaRecoveryRequired
 
@@ -166,15 +167,7 @@ class SchemaRecoveryCoordinator:
         return tuple(unique)
 
     def _media_root(self) -> Path:
-        parts = self.database_path.parts
-        indexes = [index for index, part in enumerate(parts) if part.lower() == "plugin_data"]
-        if indexes:
-            index = indexes[-1]
-            plugin_name = (
-                parts[index + 1] if index + 1 < len(parts) else "astrbot_plugin_soulcore_ai_agent"
-            )
-            return Path(*parts[:index]) / "soulcore_media" / plugin_name
-        return self.data_dir / "soulcore_media" / self.database_path.stem
+        return infer_media_root(self.database_path)
 
     @staticmethod
     def _remove_managed_path(path: Path) -> None:

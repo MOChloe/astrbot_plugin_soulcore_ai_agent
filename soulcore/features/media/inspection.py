@@ -6,8 +6,9 @@ import re
 import struct
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
+
+from ...shared.data_paths import infer_media_root as infer_media_root
 
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
 MAX_IMAGE_DECODED_PIXELS = 64_000_000
@@ -48,21 +49,6 @@ def _load(value: str | None) -> Any:
 
 def generate_media_asset_id() -> str:
     return "ma_" + uuid.uuid4().hex
-
-
-def infer_media_root(database_path: str | Path) -> Path:
-    """Choose a stable root outside plugin_data whenever its layout is known."""
-
-    path = Path(database_path).resolve(strict=False)
-    parts = path.parts
-    indexes = [index for index, part in enumerate(parts) if part.lower() == "plugin_data"]
-    if indexes:
-        index = indexes[-1]
-        plugin_name = (
-            parts[index + 1] if index + 1 < len(parts) else "astrbot_plugin_soulcore_ai_agent"
-        )
-        return Path(*parts[:index]) / "soulcore_media" / plugin_name
-    return path.parent / "soulcore_media" / path.stem
 
 
 def _jpeg_dimensions(data: bytes) -> tuple[int, int]:
