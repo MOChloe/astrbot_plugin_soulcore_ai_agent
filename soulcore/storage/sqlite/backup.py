@@ -263,11 +263,9 @@ class SQLiteBackupManager:
             self._discard_temporary(temporary)
 
     def remove_backup(self) -> None:
-        """Invalidate first, then remove a stale snapshot when the OS permits."""
+        """Disable automatic restore but retain the last snapshot for manual recovery."""
 
         self._publish_invalidation_marker()
-        with suppress(FileNotFoundError):
-            self.backup_path.unlink()
 
     def clear_primary_and_backup(self) -> None:
         """Remove the database family and every backup generation coupled to it."""
@@ -276,6 +274,7 @@ class SQLiteBackupManager:
             self.database_path,
             Path(f"{self.database_path}-wal"),
             Path(f"{self.database_path}-shm"),
+            Path(f"{self.database_path}-journal"),
             self.backup_path,
             self.migration_snapshot_path,
             self.invalidation_marker_path,
@@ -285,8 +284,10 @@ class SQLiteBackupManager:
         if self.file_artifacts is not None:
             self._remove_managed_tree(self.file_artifacts.root)
 
-    def _sidecar_paths(self) -> tuple[Path, Path]:
-        return Path(f"{self.database_path}-wal"), Path(f"{self.database_path}-shm")
+    def _sidecar_paths(self) -> tuple[Path, ...]:
+        return tuple(
+            Path(f"{self.database_path}{suffix}") for suffix in ("-wal", "-shm", "-journal")
+        )
 
     def archive_database_family(
         self,
@@ -305,6 +306,7 @@ class SQLiteBackupManager:
             (self.database_path, self.database_path.name),
             (Path(f"{self.database_path}-wal"), f"{self.database_path.name}-wal"),
             (Path(f"{self.database_path}-shm"), f"{self.database_path.name}-shm"),
+            (Path(f"{self.database_path}-journal"), f"{self.database_path.name}-journal"),
             (self.backup_path, f"managed-backup-{self.backup_path.name}"),
             (
                 self.invalidation_marker_path,
@@ -351,7 +353,7 @@ class SQLiteBackupManager:
                         separators=(",", ":"),
                     ),
                 )
-            digest = hashlib.sha256(temporary.read_bytes()).hexdigest()
+            digest = self._file_sha256(temporary)
             if temporary.stat().st_size <= 0:
                 raise OSError("recovery archive verification failed")
             self._replace_temporary(temporary, target)

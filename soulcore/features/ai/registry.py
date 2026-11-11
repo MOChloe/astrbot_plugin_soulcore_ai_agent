@@ -66,6 +66,7 @@ class CircuitPolicy:
     transient_failure_threshold: int = 3
     transient_open_seconds: float = 120.0
     immediate_open_seconds: float = 5 * 60 * 60
+    rate_limit_open_seconds: float = 60.0
 
 
 class CircuitBreaker:
@@ -149,7 +150,9 @@ class CircuitBreaker:
                 error.retry_after_seconds
                 if error.retry_after_seconds is not None
                 else (
-                    self.policy.immediate_open_seconds
+                    self.policy.rate_limit_open_seconds
+                    if error.code is AIErrorCode.RATE_LIMIT
+                    else self.policy.immediate_open_seconds
                     if immediate
                     else self.policy.transient_open_seconds
                 )

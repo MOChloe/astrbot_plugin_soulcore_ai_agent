@@ -439,12 +439,9 @@ class TimerLifecycleSqliteMixin:
                         WHERE current_occurrence.profile_id = review.profile_id
                           AND current_occurrence.instance_id = review.instance_id
                           AND current_occurrence.occurrence_id = review.occurrence_id
-                          AND (
-                            newer.execution_ref IS NOT NULL OR newer.status IN (
-                              'CLAIMED', 'RUNNING', 'WAITING_DELIVERY', 'RECOVERING',
-                              'COMPLETED', 'FAILED'
-                            )
-                          )
+                          AND (newer.execution_ref IS NOT NULL OR newer.status IN (
+                            'CLAIMED', 'RUNNING', 'WAITING_DELIVERY', 'RECOVERING',
+                            'COMPLETED', 'FAILED'))
                     )
                 )""",
                 (stamp, stamp),

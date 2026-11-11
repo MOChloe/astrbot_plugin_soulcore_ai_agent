@@ -353,8 +353,8 @@ ERROR_GUIDANCE: dict[AIErrorCode, tuple[str, str, str]] = {
     ),
     AIErrorCode.CIRCUIT_OPEN: (
         "模型接口已临时熔断",
-        "系统暂时跳过该后端。",
-        "检查连续失败原因或等待自动恢复。",
+        "当前调用没有向模型服务发出请求。",
+        "查看该模型最近一次实际请求的失败原因；处理额度、权限或限流后，可在模型设置中测试连接，或等待冷却结束。",
     ),
     AIErrorCode.CAPACITY_BUSY: (
         "模型并发已满",
@@ -402,6 +402,11 @@ def error_view(code: str, message: str) -> dict[str, Any] | None:
             "该问题可能只影响当前阶段，具体以运行状态为准。",
             "展开高级详情查看诊断码、输入和结果。",
         )
+    if (
+        normalized == AIErrorCode.CIRCUIT_OPEN.value
+        and message == "All matching AI backends currently have open circuits"
+    ):
+        message = "当前用途的候选模型都处于冷却期，本次没有发起模型请求。"
     return {
         "code": normalized,
         "title": title,

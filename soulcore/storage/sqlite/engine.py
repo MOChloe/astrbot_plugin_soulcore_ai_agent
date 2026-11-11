@@ -13,9 +13,14 @@ from typing import Any, TypeVar
 
 from astrbot.api import logger
 
-from ...shared.private_paths import ensure_private_directory, restrict_private_path
+from ...shared.private_paths import (
+    create_private_file,
+    ensure_private_directory,
+    restrict_private_path,
+)
 from .backup import SQLiteBackupManager, infer_backup_path
 from .data_layout import relocate_managed_payloads
+from .recovery_publish import recover_interrupted_restore
 from .schema.current import (
     CURRENT_SCHEMA_VERSION,
     SchemaRecoveryReason,
@@ -180,6 +185,13 @@ class SqliteEngine:
     async def _prepare_managed_storage(self) -> None:
         if self.path != ":memory:":
             ensure_private_directory(Path(self.path).parent)
+
+            def recover_pending() -> None:
+                assert self._write_fence is not None
+                with self._write_fence.hold():
+                    recover_interrupted_restore(Path(self.path))
+
+            await self._run_blocking(recover_pending)
             self._harden_database_family()
             await self._run_blocking(lambda: relocate_managed_payloads(self.path))
         if self.backup_manager is None:
@@ -249,6 +261,11 @@ class SqliteEngine:
         return result
 
     def _open_initialized_connection_locked(self) -> tuple[sqlite3.Connection, bool]:
+        if self.path != ":memory:" and not Path(self.path).exists() and self._has_existing_data():
+            raise SchemaRecoveryRequired(
+                SchemaRecoveryReason.CORRUPT_DATABASE,
+                "the primary database is missing but retained SoulCore data exists; restore before initializing",
+            )
         connection: sqlite3.Connection | None = self._connect()
         connection.row_factory = sqlite3.Row
         try:
@@ -257,6 +274,10 @@ class SqliteEngine:
             require_integrity(connection)
             changed = self._initialize_schema_state(connection)
             connection.execute("PRAGMA journal_mode=WAL")
+            if self.path != ":memory:":
+                marker = Path(self.path).with_name(f".{Path(self.path).name}.initialized")
+                if not marker.exists():
+                    create_private_file(marker)
             return connection, changed
         except BaseException:
             if connection is not None:
@@ -281,6 +302,11 @@ class SqliteEngine:
 
     def _initialize_schema_state(self, connection: sqlite3.Connection) -> bool:
         if database_is_empty(connection):
+            if self._has_existing_data():
+                raise SchemaRecoveryRequired(
+                    SchemaRecoveryReason.CORRUPT_DATABASE,
+                    "an empty primary database would overwrite retained recovery data",
+                )
             create_current_schema(connection)
             return True
         if database_uses_current_schema(connection) and self._foreign_keys_are_valid(connection):
@@ -309,6 +335,27 @@ class SqliteEngine:
         raise SchemaRecoveryRequired(
             SchemaRecoveryReason.STRUCTURE_MISMATCH,
             "database structure does not exactly match the SoulCore 1.x schema",
+        )
+
+    def _has_existing_data(self) -> bool:
+        if self.path == ":memory:":
+            return False
+        database = Path(self.path)
+        manager = self.backup_manager
+        return (
+            database.with_name(f".{database.name}.initialized").exists()
+            or (database.parent / "credentials.json").exists()
+            or any(
+                Path(f"{database}{suffix}").is_file() and Path(f"{database}{suffix}").stat().st_size
+                for suffix in ("-wal", "-journal")
+            )
+            or manager is not None
+            and (
+                manager.backup_path.exists()
+                or manager.migration_snapshot_path.exists()
+                or manager.backup_is_invalidated
+                or any((manager.backup_path.parent / "recovery").glob("*.zip"))
+            )
         )
 
     def _migrate_registered_schema(self, connection: sqlite3.Connection, identity: Any) -> None:

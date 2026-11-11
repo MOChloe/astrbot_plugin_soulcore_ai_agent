@@ -771,15 +771,30 @@ class AIWorkRecordsController:
             if _platform_call_result_unknown(item)
             else str(item.get("status") or "PENDING")
         )
+        interrupted = status == "CANCELLED" and str(item.get("last_error") or "") in {
+            "superseded_by_new_inbound_activity",
+            "recovered_pending_player_interruption",
+        }
         return {
             "status": status,
             "status_label": _DELIVERY_STATUS_LABELS.get(status, "投递状态待确认"),
             "content": str(payload.get("content") or payload.get("text") or ""),
             "scheduled_at": jsonable(item.get("not_before_at")),
-            "error": AIWorkRecordsController._error_view(
+            "notice": (
+                "收到较新的消息后，系统取消了这条尚未发出的回复，并转去处理新消息。"
+                if interrupted
+                else ""
+            ),
+            "error": None
+            if interrupted
+            else AIWorkRecordsController._error_view(
                 str(item.get("last_error_code") or ""), str(item.get("last_error") or "")
             ),
-            "diagnostic_code": str(item.get("last_diagnostic_code") or ""),
+            "diagnostic_code": str(
+                item.get("last_diagnostic_code")
+                or (item.get("last_error") if interrupted else "")
+                or ""
+            ),
         }
 
 

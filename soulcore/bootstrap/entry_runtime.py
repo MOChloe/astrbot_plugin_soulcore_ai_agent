@@ -16,6 +16,7 @@ from ..storage.sqlite.schema.current import SchemaRecoveryRequired
 from ..storage.sqlite.schema_recovery import SchemaRecoveryCoordinator
 from ..version import VERSION
 from .runtime import BootstrapRollbackError, BootstrapRollbackOwner, rollback_bootstrap
+from .runtime_fence import RuntimeOwnershipFence
 
 if TYPE_CHECKING:
     from astrbot.api.star import Context
@@ -394,20 +395,51 @@ class PluginRuntimeHost:
         return self._schema_recovery.view()
 
     async def _run_schema_recovery(self, payload: Mapping[str, Any]) -> dict[str, Any]:
-        async with self._recovery_action_lock:
+        async with self._recovery_action_lock, self._lifecycle_lock:
             coordinator = self._schema_recovery
             if coordinator is None:
                 raise ValueError("当前没有等待处理的数据库恢复问题")
-            result = await asyncio.to_thread(
-                coordinator.execute,
-                action=str(payload.get("action") or ""),
-                recovery_token=str(payload.get("recovery_token") or ""),
-                confirmation=str(payload.get("confirmation") or ""),
-            )
-            await self.initialize()
-            if self.application is None or self.init_error is not None:
-                raise RuntimeError("database was rebuilt but SoulCore initialization still failed")
-            return {**result.public_view(), "reinitialized": True}
+            if (
+                self.application is not None
+                or self._rollback_owner is not None
+                or self._termination_requested
+            ):
+                raise ValueError("运行资源尚未关闭，当前不能还原数据库")
+
+            def execute() -> Any:
+                owner = RuntimeOwnershipFence.acquire(coordinator.data_dir)
+                try:
+                    return coordinator.execute(
+                        action=str(payload.get("action") or ""),
+                        recovery_token=str(payload.get("recovery_token") or ""),
+                        confirmation=str(payload.get("confirmation") or ""),
+                    )
+                finally:
+                    owner.close()
+
+            self.ready.clear()
+            task = asyncio.create_task(asyncio.to_thread(execute))
+            cancellation: asyncio.CancelledError | None = None
+            try:
+                # A disconnected request must not release lifecycle ownership
+                # while a background thread is still replacing database files.
+                while not task.done():
+                    try:
+                        await asyncio.shield(task)
+                    except asyncio.CancelledError as exc:
+                        cancellation = cancellation or exc
+                result = task.result()
+                if not self._termination_requested:
+                    await self._initialize_locked(self._generation)
+                if cancellation is not None:
+                    raise cancellation
+                if self.application is None or self.init_error is not None:
+                    raise RuntimeError(
+                        "数据库操作已完成，但运行服务尚未恢复；恢复包已保留，请查看启动日志"
+                    )
+                return {**result.public_view(), "reinitialized": True}
+            finally:
+                self.ready.set()
 
     def _require_application(self) -> ApplicationPort:
         if self._termination_requested:
