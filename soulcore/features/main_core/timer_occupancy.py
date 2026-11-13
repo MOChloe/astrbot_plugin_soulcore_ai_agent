@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
-from contextlib import suppress
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
@@ -19,6 +19,8 @@ _FOREGROUND_CANCEL_REASON = "superseded_by_newer_foreground_activity"
 
 
 class TimerOccupancyBridge(Protocol):
+    async def is_instance_available(self, profile_id: str, instance_id: str) -> bool: ...
+
     async def wait_for_instance_available(
         self, profile_id: str, instance_id: str, *, poll_seconds: float = 0.05
     ) -> None: ...
@@ -169,6 +171,28 @@ class TimerOccupancyMixin:
     def _active_run_id(self: Any, task: asyncio.Task[Any]) -> int:
         return int(self._active_run_ids.get(task, 0))
 
+    @asynccontextmanager
+    async def _main_core_turn_lock(
+        self: Any, request: CoreWakeRequest, lock: asyncio.Lock
+    ) -> AsyncIterator[None]:
+        owns_timer = self._timer_provider_state(request) is not None
+        while True:
+            # The claimed Timer needs this same lock to run and release its
+            # occupancy. Waiting while holding it creates a circular wait.
+            if not owns_timer:
+                await self.timer_occupancy.wait_for_instance_available(
+                    request.profile_id, request.instance_id
+                )
+            async with lock:
+                # A Timer may have claimed the instance while we queued for
+                # the lock. Release it and wait outside, allowing its owner in.
+                if not owns_timer and not await self.timer_occupancy.is_instance_available(
+                    request.profile_id, request.instance_id
+                ):
+                    continue
+                yield
+                return
+
     async def _run_locked_main_core(
         self: Any,
         request: CoreWakeRequest,
@@ -180,7 +204,7 @@ class TimerOccupancyMixin:
         assert current_task is not None
         timer_state = None
         try:
-            timer_state = await self._prepare_timer_state(request, current_task)
+            timer_state = self._bind_timer_state(request, current_task)
             result = await self._execute_locked_main_core(request, role, profile_config, event)
             if timer_state is not None and not timer_state.provider_started:
                 await self._supersede_timer_state(timer_state)
@@ -208,16 +232,12 @@ class TimerOccupancyMixin:
             self._timer_provider_states.pop(current_task, None)
             self._active_run_ids.pop(current_task, None)
 
-    async def _prepare_timer_state(
+    def _bind_timer_state(
         self: Any, request: CoreWakeRequest, current_task: asyncio.Task[Any]
     ) -> _TimerProviderState | None:
         timer_state = self._timer_provider_state(request)
         if timer_state is not None:
             self._timer_provider_states[current_task] = timer_state
-        else:
-            await self.timer_occupancy.wait_for_instance_available(
-                request.profile_id, request.instance_id
-            )
         return timer_state
 
     async def _timer_superseded_result(

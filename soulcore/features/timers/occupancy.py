@@ -51,6 +51,11 @@ class TimerOccupancyCoordinator:
     async def reconcile(self, scope: TimerScope, *, now: datetime) -> int:
         return await self._admission.reconcile_timer_occupancy(scope, now=now)
 
+    async def is_instance_available(self, profile_id: str, instance_id: str) -> bool:
+        scope = TimerScope(profile_id, instance_id)
+        await self.reconcile(scope, now=datetime.now(UTC))
+        return not await self._admission.is_instance_occupied(scope)
+
     async def wait_for_instance_available(
         self,
         profile_id: str,
@@ -58,12 +63,7 @@ class TimerOccupancyCoordinator:
         *,
         poll_seconds: float = 0.05,
     ) -> None:
-        scope = TimerScope(profile_id, instance_id)
-        while True:
-            now = datetime.now(UTC)
-            await self.reconcile(scope, now=now)
-            if not await self._admission.is_instance_occupied(scope):
-                return
+        while not await self.is_instance_available(profile_id, instance_id):
             await asyncio.sleep(max(0.01, min(float(poll_seconds), 1.0)))
 
     async def begin_provider_metadata(

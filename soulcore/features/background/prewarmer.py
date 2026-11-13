@@ -92,15 +92,17 @@ class ProactiveFramePrewarmer:
         self,
         request: CoreWakeRequest,
     ) -> ProactiveFramePrewarmResult:
-        """Prepare unscheduled proactive speech, without delaying due timers."""
+        """Prepare only proactive sources; inbound and deferred paths are no-ops."""
 
         if request.source not in _PROACTIVE_SOURCES:
             return ProactiveFramePrewarmResult("SOURCE_SKIPPED")
-        # Predictable timers are prepared by the advance scheduler. At their
-        # due time, available committed context is authoritative; neither a
-        # fresh twenty-minute prewarm nor an existing slow author may delay it.
-        if request.source is WakeSource.TIMER:
-            return ProactiveFramePrewarmResult("TIMER_DUE")
+        # Durable Timer execution prepares before claiming its occupancy. A
+        # fenced request has already crossed that boundary and must not wait
+        # behind (or attempt to bypass) the occupancy it owns.
+        if request.source is WakeSource.TIMER and isinstance(
+            request.metadata.get("timer_admission_fence"), dict
+        ):
+            return ProactiveFramePrewarmResult("TIMER_ALREADY_PREPARED")
         return await self.prewarm(
             profile_id=request.profile_id,
             instance_id=str(request.instance_id or ""),

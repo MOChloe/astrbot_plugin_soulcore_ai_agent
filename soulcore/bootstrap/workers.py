@@ -104,7 +104,7 @@ class WorkerParts:
 def _assemble_background_runtime(
     foundation: Foundation,
     core: CoreRuntimeParts,
-) -> tuple[ForegroundMainCoreCoordinator, BackgroundAuthorRunner]:
+) -> tuple[ProactiveFramePrewarmer, ForegroundMainCoreCoordinator, BackgroundAuthorRunner]:
     repos = foundation.repositories
     prewarmer = ProactiveFramePrewarmer(repos.ai, foundation.ai_tasks)
     foreground = ForegroundMainCoreCoordinator(
@@ -120,13 +120,14 @@ def _assemble_background_runtime(
         identity=foundation.identity,
         operation_timeout_seconds=AI_OPERATION_TIMEOUT_SECONDS,
     )
-    return foreground, author
+    return prewarmer, foreground, author
 
 
 def _assemble_timer_runtime(
     foundation: Foundation,
     core: CoreRuntimeParts,
     foreground_main_core: ForegroundMainCoreCoordinator,
+    proactive_frame_prewarmer: ProactiveFramePrewarmer,
 ) -> tuple[TimerRuntimeWorker, TimerRunTaskExecutor, TimerLifecycleReviewTaskExecutor]:
     repos = foundation.repositories
     executor = TimerRuntimeExecutor(
@@ -142,6 +143,7 @@ def _assemble_timer_runtime(
         runtime=executor,
         retry_settler=TimerClaimRetrySettler(repos.timers),
         profiles=repos.profiles,
+        proactive_frame_prewarmer=proactive_frame_prewarmer,
         lifecycle=lifecycle,
     )
     return (
@@ -164,7 +166,9 @@ def _assemble_timer_runtime(
 
 def assemble_workers(foundation: Foundation, core: CoreRuntimeParts) -> WorkerParts:
     repos = foundation.repositories
-    foreground_main_core, background_author = _assemble_background_runtime(foundation, core)
+    proactive_frame_prewarmer, foreground_main_core, background_author = (
+        _assemble_background_runtime(foundation, core)
+    )
     summary = DialogueSummaryExecutor(
         repository=repos.conversation,
         profiles_repository=repos.profiles,
@@ -196,6 +200,7 @@ def assemble_workers(foundation: Foundation, core: CoreRuntimeParts) -> WorkerPa
         foundation,
         core,
         foreground_main_core,
+        proactive_frame_prewarmer,
     )
     register_durable_executors(
         foundation.ai_tasks,

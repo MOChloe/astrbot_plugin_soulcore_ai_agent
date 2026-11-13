@@ -425,7 +425,7 @@ class MainCoreRunner(
         if request.source is WakeSource.FOREGROUND_MESSAGE and group_fence is None:
             self.notify_foreground(request.profile_id, scope_key[1])
         lock = self._locks.setdefault(scope_key, asyncio.Lock())
-        async with lock:
+        async with self._main_core_turn_lock(request, lock):
             self._active[scope_key] = (request.source, current_task)
             if group_fence is not None:
                 self._protected_group_tasks.add(current_task)
