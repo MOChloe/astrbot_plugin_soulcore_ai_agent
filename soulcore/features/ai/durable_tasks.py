@@ -560,12 +560,16 @@ class DurableAITaskManager:
         watchers = {heartbeat, gate_watch}
         while not execution.done():
             control_wait = asyncio.create_task(control.control_event.wait())
-            done, _ = await asyncio.wait(
-                {execution, control_wait, *watchers},
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            if control_wait not in done:
-                control_wait.cancel()
+            try:
+                done, _ = await asyncio.wait(
+                    {execution, control_wait, *watchers},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+            finally:
+                # Cancellation of asyncio.wait does not cancel its children.
+                # This waiter belongs to this execution, including on reload.
+                if not control_wait.done():
+                    control_wait.cancel()
                 await asyncio.gather(control_wait, return_exceptions=True)
             for watcher in watchers.intersection(done):
                 if watcher.cancelled():

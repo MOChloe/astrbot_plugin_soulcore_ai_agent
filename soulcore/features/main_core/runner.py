@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from ...contracts.ai_models import AIInvocationError, AIWorkPurpose
+from ...contracts.durable_task_context import current_durable_ai_task_id
 from ...contracts.group_flow import GroupRunFence
 from ...contracts.models import (
     CharacterInstance,
@@ -27,6 +28,7 @@ from ...shared.contact_runtime import (
 )
 from ...shared.event_log import EventLogPort, record_event
 from ...shared.time import utcnow
+from ..ai import current_ai_work_context
 from ..ai.service import safe_ai_failure_details
 from ..character_context import CharacterRunContext, CharacterRunScope
 from ..character_model.ports import CharacterModelReadPort
@@ -475,19 +477,7 @@ class MainCoreRunner(
         expected_activity = start.expected_activity_epoch
         run_id = start.run_id
         self._bind_active_run_id(run_id)
-        foreground = request.source in {WakeSource.FOREGROUND_MESSAGE, WakeSource.DEFERRED_MESSAGE}
-        caused_by_workflow_id = await self._caused_by_workflow_id(request)
-        workflow = await self.model_gateway.start_ai_workflow(
-            profile_id=request.profile_id,
-            instance_id=str(request.instance_id or ""),
-            workflow_kind="CONVERSATION" if foreground else "PROACTIVE",
-            primary_purpose=AIWorkPurpose.MAIN_CORE.value,
-            trigger_kind=request.source.value,
-            trigger_ref=str(run_id),
-            caused_by_workflow_id=caused_by_workflow_id,
-            reason="回应对方的消息" if foreground else "角色主动发起联系",
-            idempotency_key=f"main-core-run:{run_id}",
-        )
+        workflow = await self._start_main_core_workflow(request, run_id)
         workflow_id = workflow.workflow_id if workflow is not None else None
         if workflow_id is not None:
             await self.timeline.bind_instance_run_workflow(
@@ -516,6 +506,32 @@ class MainCoreRunner(
         except Exception as exc:
             await self._fail_main_core_workflow(workflow_id, exc)
             raise
+
+    async def _start_main_core_workflow(self, request: CoreWakeRequest, run_id: int) -> Any:
+        task_id = current_durable_ai_task_id()
+        parent = current_ai_work_context()
+        if (
+            request.source is WakeSource.TIMER
+            and task_id is not None
+            and request.metadata.get("ai_task_id") == task_id
+            and parent is not None
+        ):
+            # TIMER_RUN already owns the user-visible workflow. Its model
+            # stages and outbound messages must remain under that same record,
+            # rather than leaving an empty running parent beside a second run.
+            return parent
+        foreground = request.source in {WakeSource.FOREGROUND_MESSAGE, WakeSource.DEFERRED_MESSAGE}
+        return await self.model_gateway.start_ai_workflow(
+            profile_id=request.profile_id,
+            instance_id=str(request.instance_id or ""),
+            workflow_kind="CONVERSATION" if foreground else "PROACTIVE",
+            primary_purpose=AIWorkPurpose.MAIN_CORE.value,
+            trigger_kind=request.source.value,
+            trigger_ref=str(run_id),
+            caused_by_workflow_id=await self._caused_by_workflow_id(request),
+            reason="回应对方的消息" if foreground else "角色主动发起联系",
+            idempotency_key=f"main-core-run:{run_id}",
+        )
 
     async def _finish_cancelled_main_core_workflow(
         self, workflow_id: str | None, exc: asyncio.CancelledError

@@ -92,17 +92,15 @@ class ProactiveFramePrewarmer:
         self,
         request: CoreWakeRequest,
     ) -> ProactiveFramePrewarmResult:
-        """Prepare only proactive sources; inbound and deferred paths are no-ops."""
+        """Prepare unscheduled proactive speech, without delaying due timers."""
 
         if request.source not in _PROACTIVE_SOURCES:
             return ProactiveFramePrewarmResult("SOURCE_SKIPPED")
-        # Durable Timer execution prepares before claiming its occupancy.  A
-        # fenced request has already crossed that boundary and must not wait
-        # behind (or attempt to bypass) the occupancy it owns.
-        if request.source is WakeSource.TIMER and isinstance(
-            request.metadata.get("timer_admission_fence"), dict
-        ):
-            return ProactiveFramePrewarmResult("TIMER_ALREADY_PREPARED")
+        # Predictable timers are prepared by the advance scheduler. At their
+        # due time, available committed context is authoritative; neither a
+        # fresh twenty-minute prewarm nor an existing slow author may delay it.
+        if request.source is WakeSource.TIMER:
+            return ProactiveFramePrewarmResult("TIMER_DUE")
         return await self.prewarm(
             profile_id=request.profile_id,
             instance_id=str(request.instance_id or ""),
@@ -242,10 +240,16 @@ class ProactiveFramePrewarmer:
             name=f"soulcore-proactive-frame-prerequisite:{admitted.task_id}",
         )
         remaining = self._remaining_budget(admitted.deadline, monotonic_deadline)
-        done, _ = await asyncio.wait({exact}, timeout=remaining)
+        try:
+            done, _ = await asyncio.wait({exact}, timeout=remaining)
+        finally:
+            # asyncio.wait leaves children alive when its caller is cancelled.
+            # Drain this owned child before releasing the parent's worker slot
+            # or letting runtime shutdown close the database it still uses.
+            if not exact.done():
+                exact.cancel("proactive_frame_wait_stopped")
+                await asyncio.gather(exact, return_exceptions=True)
         if exact not in done:
-            exact.cancel("proactive_frame_deadline_elapsed")
-            await asyncio.gather(exact, return_exceptions=True)
             return ProactiveFramePrewarmResult(
                 "DEADLINE_ELAPSED",
                 task_id=admitted.task_id,

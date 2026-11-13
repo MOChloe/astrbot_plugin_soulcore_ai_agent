@@ -16,7 +16,7 @@ from ..storage.sqlite.schema.current import SchemaRecoveryRequired
 from ..storage.sqlite.schema_recovery import SchemaRecoveryCoordinator
 from ..version import VERSION
 from .runtime import BootstrapRollbackError, BootstrapRollbackOwner, rollback_bootstrap
-from .runtime_fence import RuntimeOwnershipFence
+from .runtime_fence import RuntimeOwnershipError, RuntimeOwnershipFence
 
 if TYPE_CHECKING:
     from astrbot.api.star import Context
@@ -129,6 +129,12 @@ class PluginRuntimeHost:
         self._rollback_owner: BootstrapRollbackOwner | None = None
         self._recovery_action_lock = asyncio.Lock()
         self._schema_recovery: SchemaRecoveryCoordinator | None = None
+        # AstrBot purges plugin modules after terminate(), including when it
+        # failed. Keep unfinished cleanup reachable on the surviving Context;
+        # a module global would disappear before the next host could drain it.
+        self._runtime_owners: dict[str, Any] = vars(context).setdefault(
+            "_soulcore_runtime_owners", {}
+        )
 
     @property
     def commands(self) -> Any:
@@ -156,6 +162,8 @@ class PluginRuntimeHost:
         self._schema_recovery = None
         application: ApplicationPort | None = None
         try:
+            if not await self._claim_runtime_owner(generation):
+                return
             if not await self._retry_retained_application():
                 return
             if not await self._retry_rollback_owner():
@@ -184,7 +192,37 @@ class PluginRuntimeHost:
                 raise
             await self._record_initialize_failure(exc, application, generation)
         finally:
+            self._release_runtime_owner_if_closed()
             self.ready.set()
+
+    async def _claim_runtime_owner(self, generation: int) -> bool:
+        previous = self._runtime_owners.get(PERSISTENT_DATA_NAMESPACE)
+        if previous is not None and previous is not self:
+            # Only an explicitly terminated predecessor may be drained. A
+            # duplicate installation must never stop an active peer to steal
+            # its data directory; the OS fence also excludes other processes.
+            if not previous._termination_requested:
+                raise RuntimeOwnershipError("another live SoulCore runtime owns this context")
+            logger.warning("[SoulCore] resuming unfinished cleanup before runtime replacement")
+            try:
+                await previous.terminate()
+            except Exception as exc:
+                raise RuntimeError("previous SoulCore runtime cleanup is incomplete") from exc
+            if self._lifecycle_changed(generation):
+                return False
+            # Another concurrent initializer may have claimed the slot while
+            # we awaited cleanup. Never overwrite that new owner.
+            current = self._runtime_owners.get(PERSISTENT_DATA_NAMESPACE)
+            if current is not None and current is not self:
+                raise RuntimeOwnershipError("another live SoulCore runtime owns this context")
+        self._runtime_owners[PERSISTENT_DATA_NAMESPACE] = self
+        return True
+
+    def _release_runtime_owner_if_closed(self) -> None:
+        if self.application is not None or self._rollback_owner is not None:
+            return
+        if self._runtime_owners.get(PERSISTENT_DATA_NAMESPACE) is self:
+            del self._runtime_owners[PERSISTENT_DATA_NAMESPACE]
 
     async def _retry_retained_application(self) -> bool:
         application = self.application
@@ -349,6 +387,7 @@ class PluginRuntimeHost:
             else:
                 self._rollback_owner = None
             self.ready.set()
+            self._release_runtime_owner_if_closed()
             if failures:
                 raise ExceptionGroup("SoulCore runtime termination failed", failures)
 

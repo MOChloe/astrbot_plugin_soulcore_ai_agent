@@ -18,7 +18,6 @@ from ....contracts.models import (
     RoleProfile,
     RouteReadiness,
     RunStatus,
-    WakeSource,
 )
 from ..admission import TimerAdmissionFenceError, TimerAdmissionResult, TimerClaimOutcome
 from ..domain import (
@@ -147,18 +146,6 @@ class TimerTaskProfileReader(TimerProfileReader, Protocol):
     async def get_profile(self, profile_id: str) -> RoleProfile | None: ...
 
 
-class TimerProactiveFramePrewarmer(Protocol):
-    async def prewarm(
-        self,
-        *,
-        profile_id: str,
-        instance_id: str,
-        source: WakeSource,
-        source_ref: str,
-        planned_main_core_at: datetime,
-    ) -> object: ...
-
-
 class TimerLifecycleCapture(Protocol):
     async def capture_after_main_core(
         self,
@@ -180,14 +167,12 @@ class TimerRunTaskExecutor:
         runtime: TimerRuntimeExecutor,
         retry_settler: TimerClaimRetrySettler,
         profiles: TimerTaskProfileReader,
-        proactive_frame_prewarmer: TimerProactiveFramePrewarmer | None = None,
         lifecycle: TimerLifecycleCapture | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._runtime = runtime
         self._retry_settler = retry_settler
         self._profiles = profiles
-        self._proactive_frame_prewarmer = proactive_frame_prewarmer
         self._lifecycle = lifecycle
         self._clock = clock or (lambda: datetime.now(UTC))
 
@@ -208,7 +193,9 @@ class TimerRunTaskExecutor:
         attempt = max(1, int(str(task.get("attempts") or 1)))
         maximum = max(1, int(str(task.get("max_attempts") or 4)))
         now = _aware_datetime(self._clock(), label="Timer execution clock")
-        now = await self._prepare_proactive_frame(data, scope, expected_id, control, now=now)
+        # Life-frame preparation belongs to the advance background scheduler.
+        # A due timer must not spend its execution slot waiting for optional
+        # background generation before it can claim its occurrence.
         admission = await self._claim_expected(
             scope,
             expected_id,
@@ -254,41 +241,6 @@ class TimerRunTaskExecutor:
             attempt=attempt,
             maximum=maximum,
         )
-
-    async def _prepare_proactive_frame(
-        self,
-        data: Mapping[str, object],
-        scope: TimerScope,
-        expected_id: TimerOccurrenceId,
-        control: TimerTaskControl,
-        *,
-        now: datetime,
-    ) -> datetime:
-        if self._proactive_frame_prewarmer is None:
-            return now
-        try:
-            planned = _aware_datetime(data.get("original_due_at"), fallback=now)
-            stable_ref = str(data.get("stable_ref") or expected_id.value).strip()
-            await self._proactive_frame_prewarmer.prewarm(
-                profile_id=scope.profile_id,
-                instance_id=scope.instance_id,
-                source=WakeSource.TIMER,
-                source_ref=f"timer-occurrence:{stable_ref}",
-                planned_main_core_at=planned,
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.warning(
-                "Timer proactive frame preparation failed for %s/%s: %s: %s",
-                scope.profile_id,
-                scope.instance_id,
-                type(exc).__name__,
-                exc,
-            )
-        # Re-observe cancellation and wall time before claiming Timer state.
-        await control.check_control()
-        return _aware_datetime(self._clock(), label="Timer post-prewarm clock")
 
     async def _claim_expected(
         self,
@@ -483,6 +435,5 @@ __all__ = [
     "TIMER_RUN_TASK_TYPE",
     "TimerClaimFailureResult",
     "TimerClaimRetrySettler",
-    "TimerProactiveFramePrewarmer",
     "TimerRunTaskExecutor",
 ]

@@ -96,6 +96,24 @@ def _classification(lowered: str, status_code: int) -> tuple[str, str, str, str,
 
 
 def _initialization_error(lowered: str) -> tuple[str, str, str, str, str] | None:
+    if "previous soulcore runtime cleanup is incomplete" in lowered:
+        return (
+            "runtime_cleanup_pending",
+            "SoulCore 重载尚未完成",
+            "上一实例的资源尚未释放。请在插件管理中重载 SoulCore 以继续清理；"
+            "若仍失败，请完全停止 AstrBot 后再启动。",
+            "新实例尚未启动；请勿清空数据或删除运行锁文件。",
+            "app-initialization",
+        )
+    if "another live soulcore runtime owns" in lowered:
+        return (
+            "runtime_ownership_conflict",
+            "SoulCore 数据目录仍被占用",
+            "另一个 SoulCore 实例仍占用数据目录。请完全停止 AstrBot 后再启动，"
+            "并确认只启用一份 SoulCore；不要删除数据库或锁文件。",
+            "当前实例未能启动；重新连接页面无法解除占用。",
+            "app-initialization",
+        )
     if "schema recovery required [migration_failed]" in lowered:
         return (
             "schema_recovery_required",
