@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -371,7 +372,13 @@ async def _sync_profiles(resolver: ProfileResolver, repositories: RepositoryBund
 
 
 async def _recover_storage(repositories: RepositoryBundle, boot_epoch: str) -> None:
+    # Runtime ownership is already exclusive and no workers have started yet.
+    # Dead Core owners must not keep excluding background task admission.
+    await repositories.timeline.recover_orphaned_instance_runs()
     await repositories.ai.recover_orphaned_ai_invocations()
+    await repositories.turn_buffer.recover_turn_buffer_batches(
+        now=datetime.now(UTC), boot_recovery=True
+    )
     await repositories.delivery.recover_sending_instance_outbox()
     await repositories.media.recover_interrupted_media_delivery()
     await repositories.ai.recover_expired_ai_tasks(current_worker_id=f"soulcore:{boot_epoch}")

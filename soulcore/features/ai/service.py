@@ -34,6 +34,7 @@ from .context_budget import (
     estimate_model_context_requirement,
 )
 from .diagnostics import classify_generic_error, safe_ai_failure_details
+from .durable_task_runtime import PrerequisiteTaskClaim, PrerequisiteTaskClaimOutcome
 from .invocation_support import REQUEST_OPERATION_TIMEOUT_SECONDS_KEY
 from .local_commands import MainCoreCommandSet
 from .manager import AIManager
@@ -75,6 +76,8 @@ __all__ = [
     "ModelContextRequirement",
     "ParsedCommand",
     "ParsedModelTurn",
+    "PrerequisiteTaskClaim",
+    "PrerequisiteTaskClaimOutcome",
     "REQUEST_OPERATION_TIMEOUT_SECONDS_KEY",
     "ValidatedCommand",
     "classify_generic_error",

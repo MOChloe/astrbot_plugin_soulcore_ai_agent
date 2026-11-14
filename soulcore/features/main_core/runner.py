@@ -469,43 +469,73 @@ class MainCoreRunner(
             return initialization_rejection
         thinking_policy = thinking_policy_from_value(profile_config.thinking_complexity)
         state = await self._get_state(request)
-        start = await self._start_locked_main_core_run(request, state)
-        if start.rejection is not None:
-            return start.rejection
-        recovery = start.recovery
-        expected_state = start.expected_state_epoch
-        expected_activity = start.expected_activity_epoch
-        run_id = start.run_id
-        self._bind_active_run_id(run_id)
-        workflow = await self._start_main_core_workflow(request, run_id)
-        workflow_id = workflow.workflow_id if workflow is not None else None
-        if workflow_id is not None:
-            await self.timeline.bind_instance_run_workflow(
-                request.profile_id,
-                str(request.instance_id or ""),
-                run_id,
-                workflow_id,
-            )
+        start = None
+        workflow = None
+
+        async def register() -> None:
+            nonlocal start, workflow
+            start = await self._start_locked_main_core_run(request, state)
+            if start.rejection is not None:
+                return
+            workflow = await self._start_main_core_workflow(request, start.run_id)
+            if workflow is not None:
+                await self.timeline.bind_instance_run_workflow(
+                    request.profile_id,
+                    str(request.instance_id or ""),
+                    start.run_id,
+                    workflow.workflow_id,
+                )
+
         try:
+            # SQLite may commit before its awaiting caller receives the ID.
+            # Finish this short registration handoff under cancellation so
+            # every committed row has an owner that can settle it. Generation
+            # remains cancellable; only persistence registration is drained.
+            registration = asyncio.create_task(register())
+            try:
+                await asyncio.shield(registration)
+            except asyncio.CancelledError:
+                await self._drain_core_record_write(registration)
+                raise
+            finally:
+                if start is not None and start.rejection is None:
+                    self._bind_active_run_id(start.run_id)
+            assert start is not None
+            if start.rejection is not None:
+                return start.rejection
             return await self._run_main_core_workflow(
                 request=request,
                 role=role,
                 profile_config=profile_config,
                 event=event,
                 state=state,
-                recovery=recovery,
-                expected_state=expected_state,
-                expected_activity=expected_activity,
-                run_id=run_id,
+                recovery=start.recovery,
+                expected_state=start.expected_state_epoch,
+                expected_activity=start.expected_activity_epoch,
+                run_id=start.run_id,
                 workflow=workflow,
                 thinking_policy=thinking_policy,
             )
         except asyncio.CancelledError as exc:
-            await self._finish_cancelled_main_core_workflow(workflow_id, exc)
+            await self._finish_cancelled_main_core_workflow(
+                workflow.workflow_id if workflow is not None else None, exc
+            )
             raise
         except Exception as exc:
-            await self._fail_main_core_workflow(workflow_id, exc)
+            await self._fail_main_core_workflow(
+                workflow.workflow_id if workflow is not None else None, exc
+            )
             raise
+
+    @staticmethod
+    async def _drain_core_record_write(write: asyncio.Task[Any]) -> Any:
+        """Drain owned persistence after cancellation, including repeated cancellation."""
+        while not write.done():
+            try:
+                await asyncio.shield(write)
+            except asyncio.CancelledError:
+                continue
+        return write.result()
 
     async def _start_main_core_workflow(self, request: CoreWakeRequest, run_id: int) -> Any:
         task_id = current_durable_ai_task_id()
@@ -534,32 +564,33 @@ class MainCoreRunner(
         )
 
     async def _finish_cancelled_main_core_workflow(
-        self, workflow_id: str | None, exc: asyncio.CancelledError
+        self, workflow_id: int | None, exc: asyncio.CancelledError
     ) -> None:
         if workflow_id is not None:
             newer_foreground = self._is_newer_foreground_cancellation(exc)
             relocated = self._is_group_reply_relocation_cancellation(exc)
-            await asyncio.shield(
-                self.model_gateway.finish_ai_workflow(
-                    workflow_id,
-                    status="CANCELLED",
-                    final_error_code=(
-                        "GROUP_REPLY_RELOCATED"
-                        if relocated
-                        else "SUPERSEDED_BY_NEWER_FOREGROUND_ACTIVITY"
-                        if newer_foreground
-                        else "CANCELLED"
-                    ),
-                    final_message=(
-                        "群聊现场变化，改从新的位置组织表达"
-                        if relocated
-                        else "处理被新的消息取消"
-                        if newer_foreground
-                        else "处理任务被取消"
-                    ),
+            await self._drain_core_record_write(
+                asyncio.create_task(
+                    self.model_gateway.finish_ai_workflow(
+                        workflow_id,
+                        status="CANCELLED",
+                        final_error_code=(
+                            "GROUP_REPLY_RELOCATED"
+                            if relocated
+                            else "SUPERSEDED_BY_NEWER_FOREGROUND_ACTIVITY"
+                            if newer_foreground
+                            else "CANCELLED"
+                        ),
+                        final_message=(
+                            "群聊现场变化，改从新的位置组织表达"
+                            if relocated
+                            else "处理被新的消息取消"
+                            if newer_foreground
+                            else "处理任务被取消"
+                        ),
+                    )
                 )
             )
-        raise
 
     async def _run_main_core_workflow(
         self,
@@ -708,26 +739,30 @@ class MainCoreRunner(
         relocated = self._is_group_reply_relocation_cancellation(exc)
         if not self._is_newer_foreground_cancellation(exc) and not relocated:
             if run_id:
-                await asyncio.shield(
-                    self._finish_run(
-                        request,
-                        run_id,
-                        RunStatus.FAILED,
-                        error="core_run_cancelled",
+                await self._drain_core_record_write(
+                    asyncio.create_task(
+                        self._finish_run(
+                            request,
+                            run_id,
+                            RunStatus.FAILED,
+                            error="core_run_cancelled",
+                        )
                     )
                 )
             raise exc
         if run_id:
-            await asyncio.shield(
-                self._finish_run(
-                    request,
-                    run_id,
-                    RunStatus.SUPERSEDED,
-                    error=(
-                        "group_reply_relocated"
-                        if relocated
-                        else "cancelled_by_newer_foreground_activity"
-                    ),
+            await self._drain_core_record_write(
+                asyncio.create_task(
+                    self._finish_run(
+                        request,
+                        run_id,
+                        RunStatus.SUPERSEDED,
+                        error=(
+                            "group_reply_relocated"
+                            if relocated
+                            else "cancelled_by_newer_foreground_activity"
+                        ),
+                    )
                 )
             )
         return CoreRunResult(

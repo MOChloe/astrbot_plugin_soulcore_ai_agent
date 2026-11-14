@@ -158,6 +158,7 @@ class TurnBufferRepositoryPort(Protocol):
         self,
         *,
         now: datetime,
+        boot_recovery: bool = False,
     ) -> int: ...
 
     async def reconcile_turn_buffer_switches(

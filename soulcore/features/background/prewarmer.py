@@ -19,6 +19,7 @@ from astrbot.api import logger
 
 from ...contracts.durable_task_context import current_durable_ai_task_id
 from ...contracts.models import CoreWakeRequest, WakeSource
+from ..ai.service import PrerequisiteTaskClaim, PrerequisiteTaskClaimOutcome
 from .prewarm import (
     PROACTIVE_FRAME_TIMEOUT_MINUTES,
     ProactiveFrameTiming,
@@ -27,6 +28,7 @@ from .prewarm import (
 
 _PROACTIVE_SOURCES = {WakeSource.TIMER, WakeSource.PLUGIN_WAKE}
 _TERMINAL_TASK_STATUSES = {"DEFERRED", "SUCCEEDED", "FAILED", "CANCELLED"}
+_BLOCKED_TASK_STATUSES = {"PAUSED", "RECOVERY_REQUIRED"}
 
 
 class ProactiveFrameRepositoryPort(Protocol):
@@ -50,7 +52,7 @@ class ProactiveFrameTaskManagerPort(Protocol):
     async def execute_prerequisite_task(
         self,
         task_id: int,
-    ) -> object: ...
+    ) -> PrerequisiteTaskClaim: ...
 
     async def run_once(self, *, wait: bool = True) -> int: ...
 
@@ -268,15 +270,22 @@ class ProactiveFramePrewarmer:
                 type(exc).__name__,
                 exc,
             )
-            return None
-        exact_outcome = str(getattr(exact_result, "outcome", "")).upper()
-        if not exact_outcome.endswith("NOT_CLAIMABLE"):
-            return None
+            return ProactiveFramePrewarmResult("EXECUTION_FAILED", task_id=admitted.task_id)
+        # Exact execution returns after the child's runtime stops. A released,
+        # paused or recovery-blocked child cannot make progress in this worker
+        # slot while its parent occupies it waiting for a terminal status.
+        # ACTIVE may belong to another worker, which can still make progress.
         row = await self._repository.get_ai_task(admitted.task_id)
+        status = str((row or {}).get("status") or "").upper()
+        if status in _TERMINAL_TASK_STATUSES or (
+            exact_result.outcome is PrerequisiteTaskClaimOutcome.ACTIVE
+            and status in {"RUNNING", "PAUSE_REQUESTED", "CANCEL_REQUESTED"}
+        ):
+            return None
         return ProactiveFramePrewarmResult(
             "BLOCKED",
             task_id=admitted.task_id,
-            task_status=str((row or {}).get("status") or "").upper(),
+            task_status=status,
         )
 
     async def _nudge_worker(self, task_id: int) -> None:
@@ -311,6 +320,8 @@ class ProactiveFramePrewarmer:
                     task_id=task_id,
                     task_status=status,
                 )
+            if status in _BLOCKED_TASK_STATUSES:
+                return ProactiveFramePrewarmResult("BLOCKED", task_id=task_id, task_status=status)
             remaining = self._remaining_budget(deadline, monotonic_deadline)
             if remaining <= 0:
                 return ProactiveFramePrewarmResult(

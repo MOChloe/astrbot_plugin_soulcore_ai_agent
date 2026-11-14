@@ -30,6 +30,19 @@ from .world_seed import WorldSeedInvalidator, WorldSeedRecords
 
 
 class CoreRunRecords:
+    async def recover_orphaned_instance_runs(self) -> int:
+        """Settle dead Core owners only at boot, after exclusive runtime ownership."""
+        cursor = await self.db.call(
+            lambda conn: conn.execute(
+                """UPDATE instance_core_runs SET status = 'FAILED',
+                    error = 'process_restart', finished_at = ?
+                WHERE status = 'RUNNING'""",
+                (_dt(_now()),),
+            ),
+            transaction=True,
+        )
+        return int(cursor.rowcount)
+
     async def start_instance_run(
         self,
         profile_id: str,

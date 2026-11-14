@@ -18,10 +18,12 @@ class RecoverTurnBufferBatches:
         inbound_admission: InboundAdmissionTransactions,
         refresh_knowledge_task: KnowledgeRefresh,
         now: datetime,
+        boot_recovery: bool = False,
     ) -> None:
         self.inbound_admission = inbound_admission
         self.refresh_knowledge_task = refresh_knowledge_task
         self.now = now
+        self.boot_recovery = boot_recovery
         self.now_text = _dt(now)
         assert self.now_text is not None
         self.recovery_owner = f"turn-buffer-recovery:{uuid.uuid4().hex}"
@@ -47,10 +49,18 @@ class RecoverTurnBufferBatches:
                 """UPDATE conversation_turn_buffer_batches SET status = 'WAITING',
                 requested_delay_seconds = NULL, ai_elapsed_seconds = NULL,
                 remaining_delay_seconds = 0, due_at = ?, lease_owner = NULL,
-                lease_until = NULL, lease_token = lease_token + 1,
-                error_code = 'classification_lease_expired', version = version + 1,
-                updated_at = ? WHERE status = 'CLASSIFYING' AND lease_until <= ?""",
-                (self.now_text, self.now_text, self.now_text),
+                lease_until = NULL, lease_token = lease_token + 1, main_core_task_ref = NULL,
+                error_code = CASE WHEN ? THEN 'worker_restarted'
+                    ELSE 'classification_lease_expired' END, version = version + 1,
+                updated_at = ? WHERE (status = 'CLASSIFYING' AND lease_until <= ?)
+                    OR (? AND status IN ('CLASSIFYING', 'CLAIMED'))""",
+                (
+                    self.now_text,
+                    self.boot_recovery,
+                    self.now_text,
+                    self.now_text,
+                    self.boot_recovery,
+                ),
             ).rowcount
         )
 
@@ -232,12 +242,16 @@ class TurnBufferRecoveryMixin:
         self,
         *,
         now: datetime,
+        boot_recovery: bool = False,
     ) -> int:
+        # boot_recovery is reserved for the exclusive bootstrap, before any
+        # worker starts. Ordinary polling must respect live owners and leases.
         return await self.uow.run(
             RecoverTurnBufferBatches(
                 inbound_admission=self._inbound_admission,
                 refresh_knowledge_task=self._refresh_knowledge_task_sql,
                 now=now,
+                boot_recovery=boot_recovery,
             )
         )
 

@@ -408,19 +408,48 @@ class TurnBufferWorker:
         return result, retry_pending
 
     async def _release_cancelled_dispatch(self, batch: TurnBufferBatch) -> None:
-        if not self._stop.is_set():
-            return
-        await asyncio.shield(
-            self.repository.release_turn_buffer_batch(
-                batch.profile_id,
-                batch.instance_id,
-                batch.batch_id,
-                expected_generation=batch.generation,
-                expected_version=batch.version,
-                lease_token=batch.lease_token,
+        # Inbound draining can cancel the dispatch before worker.stop(). The
+        # executor is gone in either case, so release only the claim it owns.
+        release = asyncio.create_task(
+            self._release_owned_dispatch(
+                batch,
                 retry_at=datetime.now(UTC),
-                reason="dispatch_cancelled_for_shutdown",
+                reason="dispatch_cancelled",
             )
+        )
+        while not release.done():
+            try:
+                await asyncio.shield(release)
+            except asyncio.CancelledError:
+                continue
+        release.result()
+
+    async def _release_owned_dispatch(
+        self, batch: TurnBufferBatch, *, retry_at: datetime, reason: str
+    ) -> bool:
+        # Attaching MainCore increments version while preserving this claim's
+        # generation and lease. Read its current version; never release a newer
+        # generation or a replacement worker's claim using the old snapshot.
+        current = await self.repository.get_turn_buffer_batch(
+            batch.profile_id, batch.instance_id, batch.batch_id
+        )
+        if (
+            current is None
+            or current.status is not TurnBufferStatus.CLAIMED
+            or current.generation != batch.generation
+            or current.lease_token != batch.lease_token
+            or current.lease_owner != batch.lease_owner
+        ):
+            return False
+        return await self.repository.release_turn_buffer_batch(
+            current.profile_id,
+            current.instance_id,
+            current.batch_id,
+            expected_generation=current.generation,
+            expected_version=current.version,
+            lease_token=current.lease_token,
+            retry_at=retry_at,
+            reason=reason,
         )
 
     async def _requeue_failed_dispatch(
@@ -438,13 +467,8 @@ class TurnBufferWorker:
             batch.generation,
         )
         try:
-            retry_pending = await self.repository.release_turn_buffer_batch(
-                batch.profile_id,
-                batch.instance_id,
-                batch.batch_id,
-                expected_generation=batch.generation,
-                expected_version=batch.version,
-                lease_token=batch.lease_token,
+            retry_pending = await self._release_owned_dispatch(
+                batch,
                 retry_at=datetime.now(UTC) + timedelta(minutes=1),
                 reason=f"dispatch_failed:{type(error).__name__}",
             )
