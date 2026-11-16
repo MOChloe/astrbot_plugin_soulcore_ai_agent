@@ -17,8 +17,25 @@ class ConsoleValidationError(ValueError):
         self.field_errors = dict(field_errors or {})
 
 
-class PageRuntimeStopping(RuntimeError):
+class PageRuntimeUnavailable(RuntimeError):
+    """The runtime declined a Page action before dispatch."""
+
+
+class PageRuntimeStarting(PageRuntimeUnavailable):
+    """Startup has yet to publish an application or a failure."""
+
+
+class PageRuntimeStopping(PageRuntimeUnavailable):
     """The current runtime stopped accepting Page actions before dispatch."""
+
+
+_INITIALIZATION_PENDING = (
+    "initialization_pending",
+    "SoulCore 正在启动",
+    "正在准备数据库和后台服务。若启动持续未完成，请查看 AstrBot 的插件启动日志。",
+    "当前页面数据暂时不能读取。",
+    "app-initialization",
+)
 
 
 def require_successful_settings_result(result: Mapping[str, Any]) -> None:
@@ -45,7 +62,9 @@ def console_error_envelope(
 
     raw = str(error or "").strip()
     lowered = raw.lower()
-    if isinstance(error, PageRuntimeStopping):
+    if isinstance(error, PageRuntimeStarting):
+        code, title, message, impact, anchor = _INITIALIZATION_PENDING
+    elif isinstance(error, PageRuntimeStopping):
         code, title, message, impact, anchor = (
             "runtime_stopping",
             "SoulCore 暂时无法连接",
@@ -160,13 +179,7 @@ def _initialization_error(lowered: str) -> tuple[str, str, str, str, str] | None
             "app-initialization",
         )
     if "initialization is still in progress" in lowered or "is not initialized" in lowered:
-        return (
-            "initialization_pending",
-            "SoulCore 正在启动",
-            "插件刚刚安装或重载，正在准备数据库和后台服务；请稍后重试。",
-            "当前页面数据暂时不能读取。",
-            "app-initialization",
-        )
+        return _INITIALIZATION_PENDING
     return None
 
 
@@ -258,7 +271,9 @@ def _recovery(code: str) -> list[Mapping[str, str]]:
 
 __all__ = [
     "ConsoleValidationError",
+    "PageRuntimeStarting",
     "PageRuntimeStopping",
+    "PageRuntimeUnavailable",
     "console_error_envelope",
     "require_successful_settings_result",
 ]

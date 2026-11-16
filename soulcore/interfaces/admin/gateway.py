@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from importlib import import_module
 from typing import Any, Protocol
 
-from .console_errors import ConsoleValidationError, PageRuntimeStopping, console_error_envelope
+from .console_errors import ConsoleValidationError, PageRuntimeUnavailable, console_error_envelope
 from .routes import PAGE_ROUTES
 
 PLUGIN_NAME = "astrbot_plugin_soulcore_ai_agent"
@@ -327,9 +327,9 @@ class PageApiFacade:
             if inspect.isawaitable(result):
                 result = await result
             return web.json_response(result)
-        except PageRuntimeStopping as exc:
+        except PageRuntimeUnavailable as exc:
             # The AstrBot bridge passes plugin error envelopes in successful HTTP responses.
-            return _runtime_stopping_response(web, action, exc)
+            return _runtime_unavailable_response(web, action, exc)
         except ValueError as exc:
             status_code = 400
             if action in _BOOTSTRAP_READ_ACTIONS and not isinstance(exc, ConsoleValidationError):
@@ -378,8 +378,8 @@ class PageApiFacade:
             if inspect.isawaitable(response):
                 response = await response
             return response
-        except PageRuntimeStopping as exc:
-            return _runtime_stopping_response(web, action, exc, download=True)
+        except PageRuntimeUnavailable as exc:
+            return _runtime_unavailable_response(web, action, exc, download=True)
         except ValueError as exc:
             return web.json_response(
                 {
@@ -404,8 +404,8 @@ class PageApiFacade:
             )
 
 
-def _runtime_stopping_response(
-    web: Any, action: str, error: PageRuntimeStopping, *, download: bool = False
+def _runtime_unavailable_response(
+    web: Any, action: str, error: PageRuntimeUnavailable, *, download: bool = False
 ) -> Any:
     return web.json_response(
         {

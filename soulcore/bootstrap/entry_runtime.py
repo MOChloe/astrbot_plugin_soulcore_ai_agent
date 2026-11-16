@@ -11,7 +11,11 @@ from typing import TYPE_CHECKING, Any, Protocol
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 
-from ..interfaces.admin.console_errors import ConsoleValidationError, PageRuntimeStopping
+from ..interfaces.admin.console_errors import (
+    ConsoleValidationError,
+    PageRuntimeStarting,
+    PageRuntimeStopping,
+)
 from ..interfaces.admin.controllers.role_package_uploads import DatabaseBackupUploadTransport
 from ..interfaces.admin.downloads import PageFileDownload
 from ..interfaces.astrbot.support import PERSISTENT_DATA_NAMESPACE
@@ -111,6 +115,7 @@ def _persistent_data_dir(star_tools: Any) -> Path:
 
 
 _PAGE_READY_TIMEOUT_SECONDS = 30.0
+_STARTUP_PAGE_READS = frozenset({"quick_setup_status", "quick_setup_snapshot"})
 _DATABASE_UPLOAD_OWNER = {"profile_id": "database", "role_ref": "database"}
 
 
@@ -415,7 +420,7 @@ class PluginRuntimeHost:
         return await self.application.on_message(event)
 
     async def call(self, method: str, payload: Mapping[str, Any]) -> dict[str, Any]:
-        await self._wait_for_page_runtime()
+        await self._wait_for_page_runtime(wait=method not in _STARTUP_PAGE_READS)
         if method == "schema_recovery":
             async with self._lifecycle_lock:
                 return await asyncio.to_thread(self._schema_recovery_view)
@@ -446,17 +451,19 @@ class PluginRuntimeHost:
             if self._page_actions == 0:
                 self._page_idle.set()
 
-    async def _wait_for_page_runtime(self) -> None:
+    async def _wait_for_page_runtime(self, *, wait: bool = True) -> None:
         if self._maintaining_database:
             raise PageRuntimeStopping("SoulCore is maintaining its database")
         if not self._termination_requested and not self.ready.is_set():
+            if not wait:
+                raise PageRuntimeStarting("SoulCore initialization is still in progress")
             try:
                 await asyncio.wait_for(
                     self.ready.wait(),
                     timeout=_PAGE_READY_TIMEOUT_SECONDS,
                 )
             except TimeoutError as exc:
-                raise RuntimeError("SoulCore initialization is still in progress") from exc
+                raise PageRuntimeStarting("SoulCore initialization is still in progress") from exc
         if self._termination_requested or self._maintaining_database:
             raise PageRuntimeStopping("SoulCore is terminating")
 

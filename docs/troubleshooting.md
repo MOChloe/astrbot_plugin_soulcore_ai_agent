@@ -11,6 +11,10 @@
 
 报告问题时提供 AstrBot 版本、SoulCore 版本、安装方式和第一条相关错误；不要只发送最终的空白页面截图。
 
+安装或更新日志出现 `Bad CRC-32` 时，AstrBot 收到的 ZIP 中有文件未通过完整性校验。可重新获取完整插件 ZIP，从 AstrBot 插件页选择“从文件安装”。如果重装提示现有插件目录缺少 `metadata.yaml`，先停止 AstrBot，将 `data/plugins/` 下的 SoulCore 插件目录移到该目录之外，再启动 AstrBot 从文件安装。保留 `data/plugin_data/` 和 `data/config/` 中的 SoulCore 数据与配置。
+
+页面显示“SoulCore 正在启动”时，会等待数据库和后台服务就绪并自动打开。等待结束后若仍未就绪，请查看同一时段的 SoulCore 启动日志。
+
 ## 快速设置无法通过模型验证
 
 - 确认选择的是可处理普通文字请求的聊天模型，而不是只支持嵌入、重排或图片生成的模型。
