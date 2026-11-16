@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import NoReturn
 
+from ..shared.data_paths import DATABASE_FILENAME
 from ..shared.private_paths import ensure_private_directory
 from ..storage import RepositoryBundle
 from .runtime import RuntimeLifecycle
@@ -42,7 +43,7 @@ class SoulCoreContainer:
     async def create(cls, data_dir: Path) -> SoulCoreContainer:
         ensure_private_directory(data_dir)
         repositories = RepositoryBundle.create(
-            data_dir / "soulcore.sqlite3",
+            data_dir / DATABASE_FILENAME,
             file_artifact_root=data_dir / "file_artifacts",
         )
         lifecycle = RuntimeLifecycle()

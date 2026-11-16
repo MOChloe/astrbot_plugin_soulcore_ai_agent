@@ -138,6 +138,12 @@ class PageApiFacade:
     async def schema_recovery_action(self) -> Any:
         return await self._handle("schema_recovery_action")
 
+    async def schema_recovery_upload(self) -> Any:
+        return await self._handle("schema_recovery_upload")
+
+    async def schema_recovery_download(self) -> Any:
+        return await self._handle_download("schema_recovery_download")
+
     async def settings_snapshot(self) -> Any:
         return await self._handle("settings_snapshot")
 

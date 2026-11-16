@@ -1,4 +1,4 @@
-"""Administrator-approved restoration or archived rebuild after startup refusal."""
+"""Backup, import, and recovery of the managed SoulCore database."""
 
 from __future__ import annotations
 
@@ -6,23 +6,30 @@ import hashlib
 import json
 import secrets
 import sqlite3
+import zipfile
 from contextlib import closing
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 from ...shared.data_paths import infer_media_root
 from ...shared.private_paths import create_private_file
 from .backup import RecoveryArchive, SQLiteBackupManager, infer_backup_path
+from .database_repair import RepairReport, repair_database
+from .recovery_archive import archive_members
+from .recovery_publish import recover_interrupted_restore
 from .recovery_restore import restore_source
-from .recovery_sources import archive_payloads, list_sources
+from .recovery_sources import RecoverySource, archive_payloads, list_sources
 from .schema.current import SchemaRecoveryReason, SchemaRecoveryRequired, create_current_schema
 
 CONFIRMATION_TEXT = "确认恢复操作"
 BACKUP_AND_REBUILD = "backup_and_rebuild"
 REBUILD_WITHOUT_BACKUP = "rebuild_without_backup"
 RESTORE_PREFIX = "restore:"
-_ACTIONS = frozenset({BACKUP_AND_REBUILD})
+CREATE_BACKUP = "create_backup"
+IMPORT_BACKUP = "import_backup"
+REPAIR_DATABASE = "repair"
+_ACTIONS = frozenset({BACKUP_AND_REBUILD, IMPORT_BACKUP, REPAIR_DATABASE})
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +38,8 @@ class SchemaRecoveryResult:
     backup_created: bool
     backup_name: str
     backup_sha256: str
+    backup_location: str = ""
+    repair_report: RepairReport | None = None
 
     def public_view(self) -> dict[str, Any]:
         return {
@@ -39,28 +48,30 @@ class SchemaRecoveryResult:
             "backup_created": self.backup_created,
             "backup_name": self.backup_name,
             "backup_sha256": self.backup_sha256,
-            "backup_location": f"backups/recovery/{self.backup_name}" if self.backup_name else "",
-            "restored": self.action.startswith(RESTORE_PREFIX),
-            "message": (
-                (
-                    "已从所选备份还原；还原前的数据已保留在恢复包中。"
-                    if self.backup_created
-                    else "已从所选备份还原。"
-                )
-                if self.action.startswith(RESTORE_PREFIX)
-                else f"已备份并重建。恢复包保存在插件数据目录的 backups/recovery/{self.backup_name}。"
-            ),
+            "backup_location": self.backup_location,
+            "restored": self.action == IMPORT_BACKUP or self.action.startswith(RESTORE_PREFIX),
+            "repair_report": asdict(self.repair_report) if self.repair_report else None,
+            "message": self._message(),
         }
+
+    def _message(self) -> str:
+        return {
+            CREATE_BACKUP: "备份已保存，可下载到本机。",
+            REPAIR_DATABASE: "数据库已修复，修复前的备份可以下载。",
+            IMPORT_BACKUP: "备份已导入。",
+            BACKUP_AND_REBUILD: "已保存备份并重新建立数据库。",
+        }.get(self.action, "已从所选备份还原。")
 
 
 class SchemaRecoveryCoordinator:
-    """Bind one destructive choice to the exact failed SoulCore data family."""
+    """Manage one private database family across normal operation and startup recovery."""
 
-    def __init__(self, failure: SchemaRecoveryRequired) -> None:
-        if not failure.database_path:
+    def __init__(self, database: SchemaRecoveryRequired | Path) -> None:
+        self.failure = database if isinstance(database, SchemaRecoveryRequired) else None
+        path = self.failure.database_path if self.failure is not None else database
+        if not path:
             raise ValueError("schema recovery failure has no database path")
-        self.failure = failure
-        self.database_path = Path(failure.database_path).resolve(strict=False)
+        self.database_path = Path(path).resolve(strict=False)
         self.data_dir = self.database_path.parent
         backup_path = infer_backup_path(self.database_path)
         if backup_path is None:
@@ -70,72 +81,99 @@ class SchemaRecoveryCoordinator:
             backup_path,
             file_artifact_root=self.data_dir / "file_artifacts",
         )
-        self._sources = list_sources(self.backups)
-        self._state = self._database_state()
-        self._token = secrets.token_urlsafe(32) if failure.destructive_recovery_allowed else ""
+        self._state = self._database_state() if self.failure else ""
+        self._token = secrets.token_urlsafe(32) if self.can_replace else ""
+
+    @property
+    def can_replace(self) -> bool:
+        return self.failure is None or self.failure.destructive_recovery_allowed
+
+    @property
+    def backup_directory(self) -> Path:
+        return self.backups.backup_path.parent / "recovery"
 
     def view(self) -> dict[str, Any]:
-        current_state = self._database_state()
-        if current_state != self._state:
+        sources = list_sources(self.backups)
+        current_state = self._database_state() if self.failure else ""
+        if self.failure and current_state != self._state:
             self._state = current_state
-            self._sources = list_sources(self.backups)
-            self._token = (
-                secrets.token_urlsafe(32) if self.failure.destructive_recovery_allowed else ""
-            )
+            self._token = secrets.token_urlsafe(32) if self.can_replace else ""
+        route = {
+            "required": self.failure is not None,
+            "backup_directory": str(self.backup_directory),
+            "can_import": self.can_replace,
+            "sources": [source.public_view() for source in sources],
+            "recovery_token": self._token,
+            "confirmation_text": CONFIRMATION_TEXT if self.can_replace else "",
+            "actions": self._actions(sources) if self.can_replace else [],
+        }
+        if self.failure is None:
+            return route
         title, message = _reason_copy(self.failure.reason)
-        if not self.failure.destructive_recovery_allowed:
-            return {
-                "required": True,
-                "reason": self.failure.reason.value,
-                "title": title,
-                "message": message,
-                "impact": (
-                    "SoulCore 当前不会处理消息或读取业务数据；原数据库保持不变，"
-                    "此问题禁止通过清空数据处理。"
-                ),
-                "recovery_token": "",
-                "confirmation_text": "",
-                "actions": [],
-            }
         return {
-            "required": True,
+            **route,
             "reason": self.failure.reason.value,
             "title": title,
             "message": message,
             "impact": (
-                "原数据保留中。优先选择备份还原；还原前会校验并保存当前现场。"
-                "还原会回到备份时刻，之后的数据不会合并。仅数据库快照保留当前凭据和媒体，"
-                "恢复包则还原其中的配套数据。若选择重建，将归档后清空全部本地数据。"
+                "还原会回到备份时刻。修复会保留原件，并从能够读取的记录重建数据库。"
+                if self.can_replace
+                else "当前无法处理消息。可先下载数据库备份，此问题禁止通过清空数据处理。"
             ),
-            "recovery_token": self._token,
-            "confirmation_text": CONFIRMATION_TEXT,
-            "backup_directory": "data/plugin_data/astrbot_plugin_soulcore/backups/recovery/",
-            "sources": [source.public_view() for source in self._sources],
-            "actions": [
-                *[
-                    {
-                        "action": RESTORE_PREFIX + source.id,
-                        "label": f"校验并还原：{source.label}",
-                        "description": (
-                            f"{source.path.name} · {source.public_view()['created_at']}。"
-                            + (
-                                "这份备份已标记过期，可能不含最近写入或包含已删除的数据。"
-                                if source.stale
-                                else "校验失败时保留当前数据。"
-                            )
-                        ),
-                        "recommended": index == 0 and not source.stale,
-                    }
-                    for index, source in enumerate(self._sources)
-                ],
+        }
+
+    def _actions(self, sources: list[RecoverySource]) -> list[dict[str, Any]]:
+        actions = [
+            {
+                "action": RESTORE_PREFIX + source.id,
+                "label": source.label,
+                "description": (
+                    f"{source.path.name} · {source.public_view()['created_at']}。"
+                    + (
+                        "备份已过期，可能缺少最近的变更。"
+                        if source.stale
+                        else "校验失败时保留当前数据。"
+                    )
+                ),
+                "recommended": index == 0 and not source.stale,
+            }
+            for index, source in enumerate(sources)
+        ]
+        if self.database_path.is_file():
+            actions.append(
+                {
+                    "action": REPAIR_DATABASE,
+                    "label": "修复数据库",
+                    "description": "先备份当前数据，再把可读且符合当前结构的记录导入新库。",
+                    "recommended": False,
+                }
+            )
+        if self.failure:
+            actions.append(
                 {
                     "action": BACKUP_AND_REBUILD,
                     "label": "备份全部数据并重建",
-                    "description": "先保存带校验值的完整恢复包；备份失败时不会清空。",
+                    "description": "保存恢复包后，从空数据库重新开始。",
                     "recommended": False,
-                },
-            ],
-        }
+                }
+            )
+        return actions
+
+    def validate(self, action: str, recovery_token: str, confirmation: str) -> None:
+        if action == CREATE_BACKUP:
+            return
+        if not self.can_replace:
+            raise ValueError("此数据库问题禁止通过清空数据处理")
+        if action == REBUILD_WITHOUT_BACKUP:
+            raise ValueError("已禁止不留备份直接清空；请选择备份还原或备份全部数据并重建")
+        if action not in _ACTIONS and not action.startswith(RESTORE_PREFIX):
+            raise ValueError("未知的数据库恢复动作")
+        if action == BACKUP_AND_REBUILD and not self.failure:
+            raise ValueError("当前数据库可用，请使用修复数据库")
+        if not secrets.compare_digest(str(recovery_token or ""), self._token):
+            raise ValueError("数据库恢复状态已经变化，请刷新页面后重新确认")
+        if str(confirmation or "").strip() != CONFIRMATION_TEXT:
+            raise ValueError(f"请输入“{CONFIRMATION_TEXT}”后再继续")
 
     def execute(
         self,
@@ -143,29 +181,74 @@ class SchemaRecoveryCoordinator:
         action: str,
         recovery_token: str,
         confirmation: str,
+        upload: Path | None = None,
     ) -> SchemaRecoveryResult:
-        if not self.failure.destructive_recovery_allowed:
-            raise ValueError("此数据库问题禁止通过清空数据处理")
         normalized = str(action or "").strip().lower()
-        source = next(
-            (item for item in self._sources if normalized == RESTORE_PREFIX + item.id), None
-        )
-        if normalized == REBUILD_WITHOUT_BACKUP:
-            raise ValueError("已禁止不留备份直接清空；请选择备份还原或备份全部数据并重建")
-        if normalized not in _ACTIONS and source is None:
-            raise ValueError("未知的数据库恢复动作")
-        if not secrets.compare_digest(str(recovery_token or ""), self._token):
-            raise ValueError("数据库恢复状态已经变化，请刷新页面后重新确认")
-        if str(confirmation or "").strip() != CONFIRMATION_TEXT:
-            raise ValueError(f"请输入“{CONFIRMATION_TEXT}”后再继续")
+        self.validate(normalized, recovery_token, confirmation)
         with self.backups.write_fence.hold():
-            if self._database_state() != self._state:
+            recover_interrupted_restore(self.database_path)
+            if normalized == CREATE_BACKUP:
+                return _result(
+                    normalized, self.backups.archive_database_family(archive_payloads(self.backups))
+                )
+            if self.failure and self._database_state() != self._state:
                 raise ValueError("SoulCore 数据在确认期间发生变化，请刷新页面后重新检查")
-            if source is not None:
-                archive = restore_source(self.backups, source)
-                self._token = secrets.token_urlsafe(32)
-                return _restore_result(normalized, archive)
+            result = self._apply_recovery(normalized, upload)
+            self._token = secrets.token_urlsafe(32)
+            return result
+
+    def _apply_recovery(self, action: str, upload: Path | None) -> SchemaRecoveryResult:
+        if action == REPAIR_DATABASE:
+            archive, report = repair_database(self.backups)
+            return _result(action, archive, report)
+        if action == BACKUP_AND_REBUILD:
             return self._rebuild()
+        source = (
+            self._uploaded_source(upload)
+            if action == IMPORT_BACKUP
+            else self._get_source(action.removeprefix(RESTORE_PREFIX))
+        )
+        try:
+            archive = restore_source(self.backups, source)
+        except (SchemaRecoveryRequired, sqlite3.DatabaseError, zipfile.BadZipFile) as exc:
+            raise ValueError("所选备份无法读取或校验，当前数据已保留。") from exc
+        return _result(action, archive)
+
+    def _get_source(self, source_id: str) -> RecoverySource:
+        source = next((item for item in list_sources(self.backups) if item.id == source_id), None)
+        if source is None:
+            raise ValueError("找不到这份备份，请刷新后重新选择")
+        return source
+
+    def _uploaded_source(self, path: Path | None) -> RecoverySource:
+        if path is None:
+            raise ValueError("请选择要导入的备份文件")
+        if path.suffix != ".zip":
+            return RecoverySource(path, "", "导入的数据库快照")
+        try:
+            with zipfile.ZipFile(path) as archive:
+                members = archive_members(archive)
+        except zipfile.BadZipFile as exc:
+            raise ValueError("无法读取这个备份 ZIP") from exc
+        if self.database_path.name not in members:
+            raise ValueError("恢复包缺少主数据库")
+        return RecoverySource(path, self.database_path.name, "导入的恢复包")
+
+    def download_path(self, source_id: str, backup_name: str) -> Path:
+        if source_id:
+            return self._get_source(source_id).path
+        prefix = f"{self.database_path.stem}-recovery-"
+        if (
+            Path(backup_name).name != backup_name
+            or not backup_name.startswith(prefix)
+            or not backup_name.endswith(".zip")
+        ):
+            raise ValueError("备份文件名无效")
+        path = self.backup_directory / backup_name
+        self.backups._reject_link(path)
+        if not path.is_file():
+            raise ValueError("备份文件已经移走或删除")
+        return path
 
     def _rebuild(self) -> SchemaRecoveryResult:
         payloads = self._managed_payload_paths()
@@ -184,12 +267,7 @@ class SchemaRecoveryCoordinator:
             self._state = self._database_state()
             self._token = secrets.token_urlsafe(32)
             raise
-        return SchemaRecoveryResult(
-            BACKUP_AND_REBUILD,
-            True,
-            archive.path.name,
-            archive.sha256,
-        )
+        return _result(BACKUP_AND_REBUILD, archive)
 
     def _managed_payload_paths(self) -> tuple[tuple[Path, str], ...]:
         return tuple(
@@ -241,12 +319,16 @@ class SchemaRecoveryCoordinator:
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _restore_result(action: str, archive: RecoveryArchive | None) -> SchemaRecoveryResult:
+def _result(
+    action: str, archive: RecoveryArchive | None, report: RepairReport | None = None
+) -> SchemaRecoveryResult:
     return SchemaRecoveryResult(
         action,
         archive is not None,
         archive.path.name if archive else "",
         archive.sha256 if archive else "",
+        str(archive.path) if archive else "",
+        report,
     )
 
 

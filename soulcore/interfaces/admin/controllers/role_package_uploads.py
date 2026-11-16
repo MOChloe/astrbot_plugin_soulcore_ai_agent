@@ -1,4 +1,4 @@
-"""Bounded chunk transport for ``.soulcore-role`` uploads."""
+"""Bounded Page file uploads with ordered chunks and transport checksums."""
 
 from __future__ import annotations
 
@@ -18,12 +18,14 @@ from ....features.role_package.domain import (
     UPLOAD_CHUNK_BYTES,
     RolePackageError,
 )
+from ....shared.private_paths import create_private_file, ensure_private_directory
+from ....storage.sqlite.recovery_archive import MAX_BYTES as MAX_BACKUP_BYTES
 
 _UPLOAD_TTL_SECONDS = 30 * 60
 
 
 @dataclass(frozen=True, slots=True)
-class CompletedRolePackageUpload:
+class CompletedPageUpload:
     path: Path
     filename: str
     crc32: str
@@ -45,7 +47,13 @@ class _Upload:
     updated_at: float = 0.0
 
 
-class RolePackageUploadTransport:
+class _PageFileUploadTransport:
+    file_label: str
+    extensions: tuple[str, ...]
+    max_bytes: int
+    size_limit: str
+    private = False
+
     def __init__(self, root: str | Path) -> None:
         self.root = Path(root).resolve(strict=False)
         self._sessions: dict[str, _Upload] = {}
@@ -67,18 +75,20 @@ class RolePackageUploadTransport:
         expected_size: int,
         filename: str,
     ) -> dict[str, int | str | bool]:
-        if expected_size < 1 or expected_size > MAX_ARCHIVE_BYTES:
-            raise RolePackageError("角色包必须包含内容且不能超过 128 MiB。")
+        if expected_size < 1 or expected_size > self.max_bytes:
+            raise RolePackageError(f"{self.file_label}必须包含内容且不能超过 {self.size_limit}。")
         clean_name = Path(str(filename or "")).name[:180]
-        if not clean_name.casefold().endswith(ROLE_PACKAGE_EXTENSION):
-            raise RolePackageError("请选择扩展名为 .soulcore-role 的角色包。")
+        if Path(clean_name).suffix.casefold() not in self.extensions:
+            raise RolePackageError(
+                f"请选择支持的{self.file_label}（{'、'.join(self.extensions)}）。"
+            )
         async with self._lock:
             await asyncio.to_thread(self._prepare_root)
             self._expire()
             self._discard_owner(profile_id)
             upload_id = "rpu_" + uuid.uuid4().hex
             path = self.root / f"{upload_id}.part"
-            await asyncio.to_thread(_create_empty, path)
+            await asyncio.to_thread(create_private_file if self.private else _create_empty, path)
             self._sessions[upload_id] = _Upload(
                 upload_id=upload_id,
                 role_ref=role_ref,
@@ -103,10 +113,10 @@ class RolePackageUploadTransport:
     ) -> dict[str, int | str | bool]:
         raw = _decode_chunk(encoded_chunk)
         if not raw or len(raw) > UPLOAD_CHUNK_BYTES:
-            raise RolePackageError("角色包上传分块为空或过大，请重新选择文件。")
+            raise RolePackageError(f"{self.file_label}上传分块为空或过大，请重新选择文件。")
         checksum = _crc32(raw)
         if len(raw) != expected_chunk_size or checksum != expected_chunk_crc32.lower():
-            raise RolePackageError("角色包上传分块校验失败，请重新上传。")
+            raise RolePackageError(f"{self.file_label}上传分块校验失败，请重新上传。")
         async with self._lock:
             self._expire()
             session = self._require(upload_id, role_ref, profile_id)
@@ -115,9 +125,9 @@ class RolePackageUploadTransport:
                     raise RolePackageError("重试分块与已经接收的内容不一致。")
                 return _receipt(session, checksum)
             if chunk_index != session.next_index:
-                raise RolePackageError("角色包上传分块顺序不完整，请重新上传。")
+                raise RolePackageError(f"{self.file_label}上传分块顺序不完整，请重新上传。")
             if session.received_size + len(raw) > session.expected_size:
-                raise RolePackageError("收到的角色包数据超过浏览器声明大小。")
+                raise RolePackageError(f"收到的{self.file_label}数据超过浏览器声明大小。")
             await asyncio.to_thread(_append_bytes, session.path, raw)
             session.received_size += len(raw)
             session.next_index += 1
@@ -134,22 +144,22 @@ class RolePackageUploadTransport:
         profile_id: str,
         upload_id: str,
         expected_crc32: str,
-    ) -> CompletedRolePackageUpload:
+    ) -> CompletedPageUpload:
         async with self._lock:
             self._expire()
             session = self._require(upload_id, role_ref, profile_id)
             if session.received_size != session.expected_size:
-                raise RolePackageError("角色包尚未完整上传。")
+                raise RolePackageError(f"{self.file_label}尚未完整上传。")
             checksum = _format_crc32(session.running_crc32)
             if checksum != str(expected_crc32 or "").strip().lower():
                 self._sessions.pop(upload_id, None)
                 _safe_unlink(session.path)
-                raise RolePackageError("角色包传输校验失败，已删除临时文件。")
+                raise RolePackageError(f"{self.file_label}传输校验失败，已删除临时文件。")
             await asyncio.to_thread(_sync_file, session.path)
-            completed = session.path.with_suffix(ROLE_PACKAGE_EXTENSION)
+            completed = session.path.with_suffix(Path(session.filename).suffix.casefold())
             await asyncio.to_thread(os.replace, session.path, completed)
             self._sessions.pop(upload_id, None)
-        return CompletedRolePackageUpload(completed, session.filename, checksum)
+        return CompletedPageUpload(completed, session.filename, checksum)
 
     async def abort(
         self,
@@ -175,7 +185,7 @@ class RolePackageUploadTransport:
     def _require(self, upload_id: str, role_ref: str, profile_id: str) -> _Upload:
         session = self._sessions.get(str(upload_id or ""))
         if session is None:
-            raise RolePackageError("角色包上传已经失效，请重新选择文件。")
+            raise RolePackageError(f"{self.file_label}上传已经失效，请重新选择文件。")
         if session.role_ref != role_ref or session.profile_id != profile_id:
             raise RolePackageError("角色包上传不属于当前角色。")
         return session
@@ -194,7 +204,10 @@ class RolePackageUploadTransport:
                 _safe_unlink(session.path)
 
     def _prepare_root(self) -> None:
-        self.root.mkdir(parents=True, exist_ok=True)
+        if self.private:
+            ensure_private_directory(self.root)
+        else:
+            self.root.mkdir(parents=True, exist_ok=True)
         if not self._startup_cleanup_pending:
             return
         for path in self.root.iterdir():
@@ -205,13 +218,30 @@ class RolePackageUploadTransport:
         self._startup_cleanup_pending = False
 
 
+class RolePackageUploadTransport(_PageFileUploadTransport):
+    file_label = "角色包"
+    extensions = (ROLE_PACKAGE_EXTENSION,)
+    max_bytes = MAX_ARCHIVE_BYTES
+    size_limit = "128 MiB"
+
+
+class DatabaseBackupUploadTransport(_PageFileUploadTransport):
+    file_label = "数据库备份"
+    extensions = (".zip", ".sqlite3", ".sqlite", ".db")
+    max_bytes = MAX_BACKUP_BYTES
+    size_limit = "16 GiB"
+    private = True
+
+
 def _decode_chunk(value: str) -> bytes:
     try:
         encoded = str(value or "").strip()
+        if len(encoded) > 4 * ((UPLOAD_CHUNK_BYTES + 2) // 3):
+            raise ValueError("chunk too large")
         encoded += "=" * (-len(encoded) % 4)
         return base64.b64decode(encoded, altchars=b"-_", validate=True)
     except Exception as exc:
-        raise RolePackageError("角色包上传分块无法读取。") from exc
+        raise RolePackageError("上传分块无法读取。") from exc
 
 
 def _receipt(session: _Upload, checksum: str) -> dict[str, int | str | bool]:
@@ -257,6 +287,7 @@ def _safe_unlink(path: Path) -> None:
 
 
 __all__ = [
-    "CompletedRolePackageUpload",
+    "CompletedPageUpload",
+    "DatabaseBackupUploadTransport",
     "RolePackageUploadTransport",
 ]

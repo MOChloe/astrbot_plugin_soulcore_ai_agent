@@ -4,17 +4,25 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 
-from ..interfaces.admin.console_errors import PageRuntimeStopping
+from ..interfaces.admin.console_errors import ConsoleValidationError, PageRuntimeStopping
+from ..interfaces.admin.controllers.role_package_uploads import DatabaseBackupUploadTransport
+from ..interfaces.admin.downloads import PageFileDownload
 from ..interfaces.astrbot.support import PERSISTENT_DATA_NAMESPACE
+from ..shared.data_paths import DATABASE_FILENAME
 from ..storage.sqlite.schema.current import SchemaRecoveryRequired
-from ..storage.sqlite.schema_recovery import SchemaRecoveryCoordinator
+from ..storage.sqlite.schema_recovery import (
+    CREATE_BACKUP,
+    IMPORT_BACKUP,
+    SchemaRecoveryCoordinator,
+    SchemaRecoveryResult,
+)
 from ..version import VERSION
 from .runtime import BootstrapRollbackError, BootstrapRollbackOwner, rollback_bootstrap
 from .runtime_fence import RuntimeOwnershipError, RuntimeOwnershipFence
@@ -103,6 +111,7 @@ def _persistent_data_dir(star_tools: Any) -> Path:
 
 
 _PAGE_READY_TIMEOUT_SECONDS = 30.0
+_DATABASE_UPLOAD_OWNER = {"profile_id": "database", "role_ref": "database"}
 
 
 class ApplicationPort(Protocol):
@@ -130,6 +139,12 @@ class PluginRuntimeHost:
         self._rollback_owner: BootstrapRollbackOwner | None = None
         self._recovery_action_lock = asyncio.Lock()
         self._schema_recovery: SchemaRecoveryCoordinator | None = None
+        self._online_maintenance: SchemaRecoveryCoordinator | None = None
+        self._database_uploads: DatabaseBackupUploadTransport | None = None
+        self._maintaining_database = False
+        self._page_actions = 0
+        self._page_idle = asyncio.Event()
+        self._page_idle.set()
         # AstrBot purges plugin modules after terminate(), including when it
         # failed. Keep unfinished cleanup reachable on the surviving Context;
         # a module global would disappear before the next host could drain it.
@@ -393,7 +408,7 @@ class PluginRuntimeHost:
                 raise ExceptionGroup("SoulCore runtime termination failed", failures)
 
     async def on_message(self, event: AstrMessageEvent) -> Any:
-        if self._termination_requested or not self.ready.is_set():
+        if self._termination_requested or self._maintaining_database or not self.ready.is_set():
             return None
         if self.application is None or self.init_error is not None:
             return None
@@ -402,16 +417,38 @@ class PluginRuntimeHost:
     async def call(self, method: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         await self._wait_for_page_runtime()
         if method == "schema_recovery":
-            return self._schema_recovery_view()
+            async with self._lifecycle_lock:
+                return await asyncio.to_thread(self._schema_recovery_view)
         if method == "schema_recovery_action":
-            return await self._run_schema_recovery(payload)
-        return await self._require_application().call_page(method, payload)
+            return await self._finish_database_operation(self._run_schema_recovery(payload))
+        if method == "schema_recovery_upload":
+            return await self._finish_database_operation(self._run_database_upload(payload))
+        return await self._application_page(method, payload)
 
     async def download(self, method: str, payload: Mapping[str, Any]) -> Any:
         await self._wait_for_page_runtime()
-        return await self._require_application().call_page_download(method, payload)
+        if method == "schema_recovery_download":
+            async with self._lifecycle_lock:
+                return await asyncio.to_thread(self._download_database_backup, payload)
+        return await self._application_page(method, payload, download=True)
+
+    async def _application_page(
+        self, method: str, payload: Mapping[str, Any], *, download: bool = False
+    ) -> Any:
+        application = self._require_application()
+        self._page_actions += 1
+        self._page_idle.clear()
+        try:
+            handler = application.call_page_download if download else application.call_page
+            return await handler(method, payload)
+        finally:
+            self._page_actions -= 1
+            if self._page_actions == 0:
+                self._page_idle.set()
 
     async def _wait_for_page_runtime(self) -> None:
+        if self._maintaining_database:
+            raise PageRuntimeStopping("SoulCore is maintaining its database")
         if not self._termination_requested and not self.ready.is_set():
             try:
                 await asyncio.wait_for(
@@ -420,60 +457,189 @@ class PluginRuntimeHost:
                 )
             except TimeoutError as exc:
                 raise RuntimeError("SoulCore initialization is still in progress") from exc
-        if self._termination_requested:
+        if self._termination_requested or self._maintaining_database:
             raise PageRuntimeStopping("SoulCore is terminating")
 
+    def _maintenance_coordinator(self) -> SchemaRecoveryCoordinator | None:
+        if self._schema_recovery is not None:
+            return self._schema_recovery
+        if self.application is None or self.init_error is not None:
+            return None
+        if self._online_maintenance is None:
+            from astrbot.api.star import StarTools
+
+            self._online_maintenance = SchemaRecoveryCoordinator(
+                _persistent_data_dir(StarTools) / DATABASE_FILENAME
+            )
+        return self._online_maintenance
+
     def _schema_recovery_view(self) -> dict[str, Any]:
-        if self._schema_recovery is None:
-            return {"required": False}
-        return self._schema_recovery.view()
+        coordinator = self._maintenance_coordinator()
+        return coordinator.view() if coordinator is not None else {"required": False}
+
+    def _download_database_backup(self, payload: Mapping[str, Any]) -> PageFileDownload:
+        coordinator = self._maintenance_coordinator()
+        if coordinator is None:
+            raise ConsoleValidationError("当前无法读取数据库备份")
+        try:
+            path = coordinator.download_path(
+                str(payload.get("source_id") or ""), str(payload.get("backup_name") or "")
+            )
+        except ValueError as exc:
+            raise ConsoleValidationError(str(exc)) from exc
+        return PageFileDownload(
+            path=path,
+            filename=path.name,
+            content_type="application/zip" if path.suffix == ".zip" else "application/octet-stream",
+            headers={"Cache-Control": "private, no-store"},
+        )
+
+    def _upload_transport(
+        self, coordinator: SchemaRecoveryCoordinator
+    ) -> DatabaseBackupUploadTransport:
+        if self._database_uploads is None:
+            self._database_uploads = DatabaseBackupUploadTransport(
+                coordinator.data_dir / "backups" / "import-staging"
+            )
+        return self._database_uploads
+
+    async def _run_database_upload(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        async with self._lifecycle_lock:
+            coordinator = self._maintenance_coordinator()
+            if coordinator is None or not coordinator.can_replace:
+                raise ConsoleValidationError("当前数据库无法执行导入")
+            try:
+                return await self._handle_database_upload(
+                    self._upload_transport(coordinator), payload
+                )
+            except (ValueError, TypeError) as exc:
+                raise ConsoleValidationError(str(exc)) from exc
+
+    @staticmethod
+    async def _handle_database_upload(
+        uploader: DatabaseBackupUploadTransport, payload: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        action = payload.get("action")
+        upload_id = str(payload.get("upload_id") or "")
+        if action == "upload_begin":
+            return await uploader.begin(
+                **_DATABASE_UPLOAD_OWNER,
+                expected_size=int(payload.get("file_size") or 0),
+                filename=str(payload.get("filename") or ""),
+            )
+        if action == "chunk":
+            return await uploader.append(
+                **_DATABASE_UPLOAD_OWNER,
+                upload_id=upload_id,
+                chunk_index=int(payload.get("chunk_index") or 0),
+                encoded_chunk=str(payload.get("chunk_data") or ""),
+                expected_chunk_size=int(payload.get("chunk_size") or 0),
+                expected_chunk_crc32=str(payload.get("chunk_crc32") or ""),
+            )
+        if action == "abort":
+            await uploader.abort(**_DATABASE_UPLOAD_OWNER, upload_id=upload_id)
+            return {"ok": True}
+        raise ConsoleValidationError("未知的数据库上传操作")
 
     async def _run_schema_recovery(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         async with self._recovery_action_lock, self._lifecycle_lock:
-            coordinator = self._schema_recovery
+            coordinator = self._maintenance_coordinator()
             if coordinator is None:
                 raise ValueError("当前没有等待处理的数据库恢复问题")
-            if (
-                self.application is not None
-                or self._rollback_owner is not None
-                or self._termination_requested
-            ):
+            if self._rollback_owner is not None or self._termination_requested:
                 raise ValueError("运行资源尚未关闭，当前不能还原数据库")
-
-            def execute() -> Any:
-                owner = RuntimeOwnershipFence.acquire(coordinator.data_dir)
-                try:
-                    return coordinator.execute(
-                        action=str(payload.get("action") or ""),
-                        recovery_token=str(payload.get("recovery_token") or ""),
-                        confirmation=str(payload.get("confirmation") or ""),
-                    )
-                finally:
-                    owner.close()
-
-            self.ready.clear()
-            task = asyncio.create_task(asyncio.to_thread(execute))
-            cancellation: asyncio.CancelledError | None = None
+            action = str(payload.get("action") or "").strip().lower()
+            token = str(payload.get("recovery_token") or "")
+            confirmation = str(payload.get("confirmation") or "")
             try:
-                # A disconnected request must not release lifecycle ownership
-                # while a background thread is still replacing database files.
-                while not task.done():
-                    try:
-                        await asyncio.shield(task)
-                    except asyncio.CancelledError as exc:
-                        cancellation = cancellation or exc
-                result = task.result()
-                if not self._termination_requested:
-                    await self._initialize_locked(self._generation)
-                if cancellation is not None:
-                    raise cancellation
-                if self.application is None or self.init_error is not None:
-                    raise RuntimeError(
-                        "数据库操作已完成，但运行服务尚未恢复；恢复包已保留，请查看启动日志"
+                coordinator.validate(action, token, confirmation)
+            except ValueError as exc:
+                raise ConsoleValidationError(str(exc)) from exc
+            self._maintaining_database = True
+            self.ready.clear()
+            upload: Path | None = None
+            try:
+                if action == IMPORT_BACKUP:
+                    completed = await self._upload_transport(coordinator).finish(
+                        **_DATABASE_UPLOAD_OWNER,
+                        upload_id=str(payload.get("upload_id") or ""),
+                        expected_crc32=str(payload.get("file_crc32") or ""),
                     )
-                return {**result.public_view(), "reinitialized": True}
+                    upload = completed.path
+                return await self._apply_database_action(
+                    coordinator, action, token, confirmation, upload
+                )
+            except ValueError as exc:
+                raise ConsoleValidationError(str(exc)) from exc
             finally:
+                if upload is not None:
+                    try:
+                        upload.unlink(missing_ok=True)
+                    except OSError:
+                        logger.warning(
+                            "[SoulCore] database upload staging cleanup failed", exc_info=True
+                        )
+                self._maintaining_database = False
                 self.ready.set()
+
+    async def _apply_database_action(
+        self,
+        coordinator: SchemaRecoveryCoordinator,
+        action: str,
+        token: str,
+        confirmation: str,
+        upload: Path | None,
+    ) -> dict[str, Any]:
+        restart = False
+        try:
+            if self.application is not None:
+                await self._page_idle.wait()
+                await self._close_owned_application(self.application)
+                restart = True
+            if self._termination_requested:
+                raise PageRuntimeStopping("SoulCore is terminating")
+            result = await asyncio.to_thread(
+                self._execute_database_action, coordinator, action, token, confirmation, upload
+            )
+            restart = restart or action != CREATE_BACKUP
+        finally:
+            if restart and not self._termination_requested:
+                await self._initialize_locked(self._generation)
+        if restart and not self.running:
+            raise RuntimeError("数据库操作已完成，但运行服务尚未恢复；请查看启动日志和已保存的备份")
+        return {**result.public_view(), "reinitialized": restart}
+
+    @staticmethod
+    def _execute_database_action(
+        coordinator: SchemaRecoveryCoordinator,
+        action: str,
+        token: str,
+        confirmation: str,
+        upload: Path | None,
+    ) -> SchemaRecoveryResult:
+        owner = RuntimeOwnershipFence.acquire(coordinator.data_dir)
+        try:
+            values = {} if upload is None else {"upload": upload}
+            return coordinator.execute(
+                action=action, recovery_token=token, confirmation=confirmation, **values
+            )
+        finally:
+            owner.close()
+
+    @staticmethod
+    async def _finish_database_operation(operation: Coroutine[Any, Any, Any]) -> Any:
+        # Disconnecting a Page must not release either fence during publication.
+        task = asyncio.create_task(operation)
+        cancellation: asyncio.CancelledError | None = None
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError as exc:
+                cancellation = cancellation or exc
+        result = task.result()
+        if cancellation is not None:
+            raise cancellation
+        return result
 
     def _require_application(self) -> ApplicationPort:
         if self._termination_requested:

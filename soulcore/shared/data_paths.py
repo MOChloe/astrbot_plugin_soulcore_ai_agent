@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+DATABASE_FILENAME = "soulcore.sqlite3"
+
 
 def infer_media_root(database_path: str | Path) -> Path:
     database = Path(database_path).resolve(strict=False)

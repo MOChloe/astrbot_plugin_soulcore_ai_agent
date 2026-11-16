@@ -149,13 +149,22 @@ PAGE_ROUTES = (
         "schema_recovery",
         "schema_recovery",
         ("GET",),
-        "Read a bounded database recovery choice after startup refusal",
+        "Read the database backup and recovery choices",
     ),
     PageRoute(
         "schema_recovery_action",
         "schema_recovery_action",
         ("POST",),
-        "Execute one explicitly confirmed database recovery choice",
+        "Create a backup or apply one database recovery choice",
+    ),
+    PageRoute(
+        "schema_recovery_upload", "schema_recovery_upload", ("POST",), "Upload a database backup"
+    ),
+    PageRoute(
+        "schema_recovery_download",
+        "schema_recovery_download",
+        ("GET",),
+        "Download a saved database backup",
     ),
     PageRoute(
         "settings_snapshot",
