@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-from ....contracts.delivery_visibility import DIALOGUE_CONTINUITY_OUTBOUND_STATUSES
 from ...profiles.service import ProfileRuntimeDisabled
 from ..ports import KnowledgeFormationResult
 from .support import (
-    CONTEXT_ELIGIBLE_INBOUND_STATUSES,
     KNOWLEDGE_TASK_TYPE,
     Any,
     Mapping,
+    _context_eligible_sql,
     _dt,
     _dump,
     _knowledge_semantic_terms,
+    _load,
     _memory_content_fingerprint,
     _normalize_knowledge_text,
     _now,
@@ -89,8 +89,8 @@ class _KnowledgeCommitTransaction:
         self.sources: dict[int, sqlite3.Row] = {}
 
     def __call__(self, conn: sqlite3.Connection) -> dict[str, Any]:
-        state = self._validate_lease(conn)
-        self.sources = self._load_sources(conn)
+        batch, state = self._validate_lease(conn)
+        self.sources = self._load_sources(conn, batch, state)
         memory_ids, memory_rejections = self._commit_memories(conn)
         world_ids, world_rejections = self._commit_world_info(conn)
         return self._finalize(
@@ -101,7 +101,7 @@ class _KnowledgeCommitTransaction:
             [*memory_rejections, *world_rejections],
         )
 
-    def _validate_lease(self, conn: sqlite3.Connection) -> sqlite3.Row:
+    def _validate_lease(self, conn: sqlite3.Connection) -> tuple[sqlite3.Row, sqlite3.Row]:
         runtime = conn.execute(
             """SELECT p.enabled,
                 COALESCE(policy.soulcore_enabled, 1) AS instance_enabled
@@ -113,7 +113,11 @@ class _KnowledgeCommitTransaction:
         ).fetchone()
         if runtime is None or not bool(runtime["enabled"]) or not bool(runtime["instance_enabled"]):
             raise ProfileRuntimeDisabled(self.profile_id, self.instance_id)
-        task = conn.execute("SELECT * FROM ai_tasks WHERE task_id = ?", (self.task_id,)).fetchone()
+        task = conn.execute(
+            """SELECT * FROM ai_tasks
+            WHERE task_id = ? AND profile_id = ? AND instance_id = ?""",
+            (self.task_id, self.profile_id, self.instance_id),
+        ).fetchone()
         batch = conn.execute(
             """SELECT * FROM knowledge_batches WHERE batch_id = ?
             AND profile_id = ? AND instance_id = ?""",
@@ -137,28 +141,31 @@ class _KnowledgeCommitTransaction:
         )
         if stale:
             raise RuntimeError("knowledge batch/task lease is stale")
-        if int(batch["processing_version"]) != int(state["processing_version"]):
-            raise RuntimeError("knowledge processing state version changed")
-        return state
+        return batch, state
 
-    def _load_sources(self, conn: sqlite3.Connection) -> dict[int, sqlite3.Row]:
+    def _load_sources(
+        self, conn: sqlite3.Connection, batch: sqlite3.Row, state: sqlite3.Row
+    ) -> dict[int, sqlite3.Row]:
+        # Unrelated dialogue can become eligible while the model runs. Validate the
+        # actual model inputs and mark only the evidence selected for this batch.
+        eligible_sql = _context_eligible_sql()
         rows = conn.execute(
-            """SELECT m.*, bm.projected_text, bm.projection_truncated
+            f"""SELECT m.*, bm.projected_text, bm.projection_truncated, bm.is_boundary
             FROM knowledge_batch_messages bm
             JOIN instance_messages m ON m.profile_id = bm.profile_id
               AND m.instance_id = bm.instance_id AND m.message_id = bm.message_id
-            WHERE bm.batch_id = ? AND bm.is_boundary = 0""",
-            (self.batch_id,),
+            LEFT JOIN knowledge_message_marks mark ON mark.profile_id = m.profile_id
+              AND mark.instance_id = m.instance_id AND mark.message_id = m.message_id
+            WHERE bm.batch_id = ? AND m.knowledge_eligibility = 'ELIGIBLE'
+              AND {eligible_sql}
+              AND (bm.projection_truncated = 1 OR bm.projected_text = m.plain_text)
+              AND (bm.is_boundary = 1 OR (m.message_id > ? AND mark.message_id IS NULL))""",
+            (self.batch_id, int(state["baseline_message_id"])),
         ).fetchall()
-        inbound = set(CONTEXT_ELIGIBLE_INBOUND_STATUSES)
-        outbound = set(DIALOGUE_CONTINUITY_OUTBOUND_STATUSES)
-        for row in rows:
-            allowed = inbound if str(row["direction"]) == "INBOUND" else outbound
-            if str(row["knowledge_eligibility"]) != "ELIGIBLE":
-                raise RuntimeError("knowledge source eligibility changed after preparation")
-            if str(row["delivery_status"]) not in allowed:
-                raise RuntimeError("knowledge source eligibility changed after preparation")
-        return {int(row["message_id"]): row for row in rows}
+        expected = int(batch["message_count"]) + len(_load(batch["boundary_message_ids_json"]))
+        if len(rows) != expected:
+            raise RuntimeError("knowledge source eligibility changed after preparation")
+        return {int(row["message_id"]): row for row in rows if not row["is_boundary"]}
 
     def _evidence_for(self, item: dict[str, Any]) -> list[tuple[int, str]]:
         raw_evidence = item.get("evidence")

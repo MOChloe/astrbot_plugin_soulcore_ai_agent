@@ -335,7 +335,8 @@ class AdmittedTurnMixin:
             heartbeat.cancel()
         try:
             await heartbeat
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, ForegroundLeaseLost):
+            # The runner handles a lost lease while the turn is still executing.
             pass
         except Exception:
             logger.exception("foreground/background lease heartbeat failed while stopping")

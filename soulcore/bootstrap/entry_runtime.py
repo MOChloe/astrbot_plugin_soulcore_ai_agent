@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 
+from ..interfaces.admin.console_errors import PageRuntimeStopping
 from ..interfaces.astrbot.support import PERSISTENT_DATA_NAMESPACE
 from ..storage.sqlite.schema.current import SchemaRecoveryRequired
 from ..storage.sqlite.schema_recovery import SchemaRecoveryCoordinator
@@ -399,16 +400,7 @@ class PluginRuntimeHost:
         return await self.application.on_message(event)
 
     async def call(self, method: str, payload: Mapping[str, Any]) -> dict[str, Any]:
-        if self._termination_requested:
-            raise RuntimeError("SoulCore is terminating")
-        if not self.ready.is_set():
-            try:
-                await asyncio.wait_for(
-                    self.ready.wait(),
-                    timeout=_PAGE_READY_TIMEOUT_SECONDS,
-                )
-            except TimeoutError as exc:
-                raise RuntimeError("SoulCore initialization is still in progress") from exc
+        await self._wait_for_page_runtime()
         if method == "schema_recovery":
             return self._schema_recovery_view()
         if method == "schema_recovery_action":
@@ -416,9 +408,11 @@ class PluginRuntimeHost:
         return await self._require_application().call_page(method, payload)
 
     async def download(self, method: str, payload: Mapping[str, Any]) -> Any:
-        if self._termination_requested:
-            raise RuntimeError("SoulCore is terminating")
-        if not self.ready.is_set():
+        await self._wait_for_page_runtime()
+        return await self._require_application().call_page_download(method, payload)
+
+    async def _wait_for_page_runtime(self) -> None:
+        if not self._termination_requested and not self.ready.is_set():
             try:
                 await asyncio.wait_for(
                     self.ready.wait(),
@@ -426,7 +420,8 @@ class PluginRuntimeHost:
                 )
             except TimeoutError as exc:
                 raise RuntimeError("SoulCore initialization is still in progress") from exc
-        return await self._require_application().call_page_download(method, payload)
+        if self._termination_requested:
+            raise PageRuntimeStopping("SoulCore is terminating")
 
     def _schema_recovery_view(self) -> dict[str, Any]:
         if self._schema_recovery is None:

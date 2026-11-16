@@ -347,7 +347,7 @@ def renew_foreground_lease_sql(
     lease_until: str,
     now: str,
 ) -> bool:
-    """Extend a live generation only while this owner still holds it."""
+    """Renew a generation held by this owner while foreground still owns the instance."""
 
     normalized_owner, normalized_token = _required_foreground_lease_identity(owner, token)
     current = conn.execute(
@@ -359,16 +359,25 @@ def renew_foreground_lease_sql(
     ).fetchone()
     if current is None:
         return False
+    current_token = str(current["foreground_lease_token"] or "")
+    current_until = str(current["foreground_lease_until"] or "")
     current_count = int(current["foreground_lease_count"] or 0)
     holders = _foreground_lease_holders(
         current["foreground_lease_holders_json"],
         expected_count=current_count,
     )
     if (
-        str(current["foreground_lease_token"] or "") != normalized_token
+        current_token != normalized_token
         or normalized_owner not in holders
-        or current_count <= 0
-        or str(current["foreground_lease_until"] or "") <= now
+        or not _shares_foreground_generation(
+            conn,
+            current_token=current_token,
+            current_until=current_until,
+            current_count=current_count,
+            profile_id=profile_id,
+            instance_id=instance_id,
+            now=now,
+        )
     ):
         return False
     return (
@@ -382,7 +391,7 @@ def renew_foreground_lease_sql(
               AND foreground_lease_token = ?
               AND foreground_lease_holders_json = ?
               AND foreground_lease_count = ?
-              AND foreground_lease_until > ?""",
+              AND foreground_lease_until IS ?""",
             (
                 lease_until,
                 lease_until,
@@ -392,7 +401,7 @@ def renew_foreground_lease_sql(
                 normalized_token,
                 str(current["foreground_lease_holders_json"]),
                 current_count,
-                now,
+                current["foreground_lease_until"],
             ),
         ).rowcount
         == 1

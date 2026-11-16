@@ -324,6 +324,10 @@ class InboundEventController(
         ):
             return None
         payload = event_context_payload(event)
+        if await self._voice_coordinator().ignore_unavailable_voice(
+            profile_id, instance.scope, payload
+        ):
+            return None
         message_text = str(payload["plain_text"] or "").strip()
         has_content = bool(
             message_text or payload["components"] or event_reference_message_id(event)

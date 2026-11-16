@@ -11,6 +11,7 @@ from typing import Any
 from ...contracts.ai_models import (
     AIAudioContent,
     AICapabilityEffect,
+    AICapabilityName,
     AICapabilityRequest,
     AIExecutionMode,
     AITranscriptionResult,
@@ -172,6 +173,34 @@ class InboundVoiceCoordinator:
         if not state.pending and state.active is None and self._instance_order.get(key) is state:
             self._instance_order.pop(key, None)
 
+    async def ignore_unavailable_voice(
+        self, profile_id: str, scope: str, payload: dict[str, Any]
+    ) -> bool:
+        """Drop unroutable speech and report whether the group event can be ignored."""
+        if scope != "group" or not (entries := payload.get("inbound_voice")):
+            return False
+        if self.ai_manager is not None and await self.ai_manager.has_capability_provider(
+            AICapabilityName.AUDIO_TRANSCRIBE.value, profile_id
+        ):
+            return False
+
+        voice_indexes = {self._entry_component_index(entry) for entry in entries}
+        payload.pop("inbound_voice")
+        ordered_projection = payload.pop("voice_ordered_projection")
+        self._remove_voice_media(payload)
+        payload["components"] = [
+            item for index, item in enumerate(payload["components"]) if index not in voice_indexes
+        ]
+        payload["plain_text"] = self._joined_projection(
+            [part for index, part in enumerate(ordered_projection) if index not in voice_indexes]
+        )
+        # A mention or quote may address a voice message without adding any content of its own.
+        return not any(
+            item["type"] not in {"at", "atall", "reply"}
+            and (item["type"] not in {"text", "plain"} or str(item.get("text") or "").strip())
+            for item in payload["components"]
+        )
+
     async def transcribe_payload(
         self,
         *,
@@ -307,7 +336,7 @@ class InboundVoiceCoordinator:
                 result = await self.ai_manager.invoke_capability(
                     AICapabilityRequest(
                         invocation_id=uuid.uuid4().hex,
-                        capability="audio.transcribe",
+                        capability=AICapabilityName.AUDIO_TRANSCRIBE.value,
                         work_purpose=AIWorkPurpose.AUDIO_TRANSCRIPTION,
                         logical_stage_key=stage_key,
                         payload={

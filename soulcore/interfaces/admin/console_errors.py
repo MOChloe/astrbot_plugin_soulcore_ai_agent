@@ -17,6 +17,10 @@ class ConsoleValidationError(ValueError):
         self.field_errors = dict(field_errors or {})
 
 
+class PageRuntimeStopping(RuntimeError):
+    """The current runtime stopped accepting Page actions before dispatch."""
+
+
 def require_successful_settings_result(result: Mapping[str, Any]) -> None:
     """Raise one field-aware error for an unsuccessful settings controller result."""
 
@@ -41,7 +45,16 @@ def console_error_envelope(
 
     raw = str(error or "").strip()
     lowered = raw.lower()
-    code, title, message, impact, anchor = _classification(lowered, status_code)
+    if isinstance(error, PageRuntimeStopping):
+        code, title, message, impact, anchor = (
+            "runtime_stopping",
+            "SoulCore 暂时无法连接",
+            "请在 AstrBot 插件管理中确认 SoulCore 已启用并加载成功，再重新连接。",
+            "暂时无法读取或保存设置。",
+            "app-initialization",
+        )
+    else:
+        code, title, message, impact, anchor = _classification(lowered, status_code)
     occurrence_source = f"{action}|{code}|{type(error).__name__}|{raw}"
     occurrence_id = hashlib.sha256(occurrence_source.encode("utf-8")).hexdigest()[:16]
     envelope = {
@@ -245,6 +258,7 @@ def _recovery(code: str) -> list[Mapping[str, str]]:
 
 __all__ = [
     "ConsoleValidationError",
+    "PageRuntimeStopping",
     "console_error_envelope",
     "require_successful_settings_result",
 ]
