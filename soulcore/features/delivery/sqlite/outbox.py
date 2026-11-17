@@ -67,6 +67,8 @@ class _TransitionOutbox:
         if row is None:
             return False
         current = OutboxStatus(str(row["status"]))
+        if current not in self.previous:
+            return False
         if current is OutboxStatus.PENDING and self.status in {
             OutboxStatus.CANCELLED,
             OutboxStatus.FAILED,
@@ -379,6 +381,7 @@ class OutboxRecords:
         outbox_id: int,
         status: OutboxStatus | str,
         *,
+        expected_status: OutboxStatus | None = None,
         error_code: str = "",
         error: str | None = None,
         diagnostic_code: str = "",
@@ -393,7 +396,9 @@ class OutboxRecords:
             OutboxStatus.PENDING: {OutboxStatus.FAILED, OutboxStatus.SENDING},
             OutboxStatus.CANCELLED: {OutboxStatus.PENDING, OutboxStatus.SENDING},
         }
-        previous = tuple(sorted(allowed.get(status, set()), key=lambda item: item.value))
+        previous = allowed.get(status, set())
+        if expected_status is not None:
+            previous = previous & {expected_status}
         if not previous:
             return False
         now = _dt(_now())
@@ -404,7 +409,7 @@ class OutboxRecords:
                     instance_id,
                     outbox_id,
                     status,
-                    previous,
+                    tuple(sorted(previous, key=lambda item: item.value)),
                     error_code=error_code,
                     error=error,
                     diagnostic_code=diagnostic_code,

@@ -320,7 +320,7 @@ class RunnerRuntimeMixin:
             epoch = await self.outbox.advance_activity_and_interrupt_expressions(
                 profile_id, instance_id, int(inbound_message_id)
             )
-            await self._settle_applied_inbound_activity(profile_id, umo, instance_id)
+            await self.settle_applied_inbound_activity(profile_id, umo, instance_id, epoch)
             return int(epoch)
 
     async def settle_applied_inbound_activity(
@@ -328,22 +328,25 @@ class RunnerRuntimeMixin:
         profile_id: str,
         umo: str,
         instance_id: str,
+        activity_epoch: int,
     ) -> None:
-        """Finish runtime invalidation after durable admission advanced activity."""
+        """Settle stale pending output without waiting for a platform call."""
 
-        async with self._delivery_lock(profile_id, umo):
-            await self._settle_applied_inbound_activity(profile_id, umo, instance_id)
-
-    async def _settle_applied_inbound_activity(
-        self,
-        profile_id: str,
-        umo: str,
-        instance_id: str,
-    ) -> None:
-        items = await self._pending_outbox_for_invalidation(profile_id, instance_id)
+        # Admission already handles expression batches in its transaction. For
+        # other outbox items, only a still-pending row can be cancelled here.
         self.notify_expression_outbox()
+        items = await self.outbox.list_instance_outbox(
+            profile_id,
+            instance_id,
+            status=OutboxStatus.PENDING,
+            limit=100,
+        )
         for item in items:
-            if item.umo != umo or self._is_expression_outbox(item):
+            if (
+                item.umo != umo
+                or item.activity_epoch >= activity_epoch
+                or self._is_expression_outbox(item)
+            ):
                 continue
             await self._invalidate_non_expression_outbox_item(profile_id, instance_id, item)
 
@@ -357,23 +360,8 @@ class RunnerRuntimeMixin:
 
         async with self._delivery_lock(profile_id, umo):
             epoch = await self.outbox.advance_group_held_activity(profile_id, instance_id)
-            items = await self._pending_outbox_for_invalidation(profile_id, instance_id)
-            self.notify_expression_outbox()
-            for item in items:
-                if item.umo != umo or self._is_expression_outbox(item):
-                    continue
-                await self._invalidate_non_expression_outbox_item(profile_id, instance_id, item)
+            await self.settle_applied_inbound_activity(profile_id, umo, instance_id, epoch)
             return int(epoch)
-
-    async def _pending_outbox_for_invalidation(
-        self, profile_id: str, instance_id: str
-    ) -> list[Any]:
-        return await self.outbox.list_instance_outbox(
-            profile_id,
-            instance_id,
-            status=OutboxStatus.PENDING,
-            limit=100,
-        )
 
     @staticmethod
     def _is_expression_outbox(item: Any) -> bool:
@@ -384,14 +372,17 @@ class RunnerRuntimeMixin:
     async def _invalidate_non_expression_outbox_item(
         self, profile_id: str, instance_id: str, item: Any
     ) -> None:
-        important_todo_ids = self._important_todo_ids(item.payload)
-        await self._transition_scoped_outbox(
+        changed = await self.outbox.transition_instance_outbox(
             profile_id,
             instance_id,
             item.outbox_id,
             OutboxStatus.FAILED,
+            expected_status=OutboxStatus.PENDING,
             error="superseded_by_new_inbound_activity",
         )
+        if not changed:
+            return
+        important_todo_ids = self._important_todo_ids(item.payload)
         if important_todo_ids:
             await self.files.settle_file_todos(
                 profile_id,

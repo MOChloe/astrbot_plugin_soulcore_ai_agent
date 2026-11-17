@@ -144,9 +144,11 @@ class GroupInboundMixin:
             return False
         if admission.group_activity_held:
             return True
-        if admission.applied and admission.activity_advanced:
-            await self.runner.settle_applied_inbound_activity(profile_id, captured.raw, instance_id)
         self.runner.notify_foreground(profile_id, instance_id)
+        if admission.applied and admission.activity_advanced:
+            await self.runner.settle_applied_inbound_activity(
+                profile_id, captured.raw, instance_id, admission.activity_epoch
+            )
         return True
 
     async def _run_with_inbound_lease(
@@ -214,9 +216,11 @@ class GroupInboundMixin:
         )
         if not admission.ownership_valid:
             return None
-        if admission.applied and admission.activity_advanced:
-            await self.runner.settle_applied_inbound_activity(profile_id, captured.raw, instance_id)
         self.runner.notify_foreground(profile_id, instance_id)
+        if admission.applied and admission.activity_advanced:
+            await self.runner.settle_applied_inbound_activity(
+                profile_id, captured.raw, instance_id, admission.activity_epoch
+            )
         barrier = await self._expression_foreground_barrier(
             profile_id, instance_id, int(admission.activity_epoch)
         )

@@ -265,9 +265,11 @@ class InboundRuntimeMixin:
             group_scope=False,
         )
         epoch = int(admission.activity_epoch)
-        if admission.applied and admission.activity_advanced:
-            await self.runner.settle_applied_inbound_activity(profile_id, captured.raw, instance_id)
         self.runner.notify_foreground(profile_id, instance_id)
+        if admission.applied and admission.activity_advanced:
+            await self.runner.settle_applied_inbound_activity(
+                profile_id, captured.raw, instance_id, epoch
+            )
         barrier = await self._expression_foreground_barrier(profile_id, instance_id, epoch)
         return epoch, bool(barrier.get("blocked"))
 

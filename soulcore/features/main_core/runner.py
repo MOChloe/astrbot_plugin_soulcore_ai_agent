@@ -25,6 +25,7 @@ from ...contracts.thinking import MainCoreThinkingPolicy, thinking_policy_from_v
 from ...shared.contact_runtime import (
     CONTACT_ROUTE_CHANGED_REASON,
     CONTACT_ROUTE_NOT_READY_REASON,
+    is_proactive_contact_request,
 )
 from ...shared.event_log import EventLogPort, record_event
 from ...shared.time import utcnow
@@ -182,9 +183,10 @@ class RunnerLifecycleMixin:
             and str(temporary_absence.get("status") or "").upper() == "ENDED"
             and str(temporary_absence.get("end_reason") or "").upper() == "NATURAL_EXPIRY"
         )
-        if (not foreground and not natural_absence_expiry) or (
-            expected_activity == state.activity_epoch
-        ):
+        activity_sensitive = (
+            foreground or natural_absence_expiry or is_proactive_contact_request(request.metadata)
+        )
+        if not activity_sensitive or expected_activity == state.activity_epoch:
             return None
         error = "superseded_before_ai_by_newer_foreground_activity"
         await self._finish_run(request, run_id, RunStatus.SUPERSEDED, error=error)
